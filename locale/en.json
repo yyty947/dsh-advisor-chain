@@ -1,0 +1,7 @@
+{
+  "meta": {
+    "title": "Advisor",
+    "description": "Ask a configured advisor model chain for a second opinion on demand; the advisor automatically sees the full conversation history.",
+    "detail": "docs/DETAIL.md"
+  }
+}

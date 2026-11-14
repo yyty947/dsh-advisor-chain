@@ -424,6 +424,45 @@ moduleLoaderWindow.__ModuleLoader__!.load({
         children);
     }
 
+    /** Native-style select: appearance reset + drawn chevron overlay, so the
+     *  closed control matches the host's rounded, bordered selector (the
+     *  dropdown list itself stays browser-native). */
+    function Select({ value, onChange, width, ariaLabel, children }: {
+      value: string;
+      onChange: (e: React.ChangeEvent<HTMLSelectElement>) => void;
+      width: number | string;
+      ariaLabel?: string;
+      children?: React.ReactNode;
+    }) {
+      return h("div", { style: { position: "relative", display: "inline-flex", width } },
+        h("select", {
+          style: {
+            ...SET.control,
+            width: "100%",
+            appearance: "none",
+            WebkitAppearance: "none",
+            MozAppearance: "none",
+            paddingRight: 28,
+            cursor: "pointer",
+          },
+          value,
+          "aria-label": ariaLabel,
+          onChange,
+        }, children),
+        h("span", {
+          "aria-hidden": true,
+          style: {
+            position: "absolute",
+            right: 11,
+            top: "50%",
+            transform: "translateY(-50%)",
+            pointerEvents: "none",
+            fontSize: 10,
+            color: "var(--dsw-alias-label-secondary)",
+          },
+        }, "▾"));
+    }
+
     function AdvisorSettingsTab() {
       const [draft, setDraft] = useState<DraftConfig | null>(null);
       const [revision, setRevision] = useState(0);
@@ -660,8 +699,9 @@ moduleLoaderWindow.__ModuleLoader__!.load({
               value: entry.label ?? "",
               onChange: (e: React.ChangeEvent<HTMLInputElement>) => patchEntry(index, { label: e.target.value }),
             })),
-            h(Field, { label: "Provider" }, h("select", {
-              style: { ...SET.control, width: 180 },
+            h(Field, { label: "Provider" }, h(Select, {
+              width: "100%",
+              ariaLabel: "Provider",
               value: entry.provider,
               onChange: (e: React.ChangeEvent<HTMLSelectElement>) => patchEntry(index, { provider: e.target.value }),
             }, providers.length > 0
@@ -679,8 +719,9 @@ moduleLoaderWindow.__ModuleLoader__!.load({
                   modelOptions[entry.provider].map((id) => h("option", { key: id, value: id })))
               : null),
           h("div", { style: { display: "flex", gap: 12, flexWrap: "wrap", marginTop: 10 } },
-            h(Field, { label: "推理档位" }, h("select", {
-              style: { ...SET.control, width: 160 },
+            h(Field, { label: "推理档位" }, h(Select, {
+              width: 170,
+              ariaLabel: "推理档位",
               value: entry.reasoningEffort ?? "",
               onChange: (e: React.ChangeEvent<HTMLSelectElement>) => patchEntry(index, { reasoningEffort: e.target.value || undefined }),
             }, EFFORTS.map((effort) => h("option", { key: effort.value, value: effort.value }, effort.label)))),
@@ -706,9 +747,10 @@ moduleLoaderWindow.__ModuleLoader__!.load({
           h(SRow, { title: "启用 Advisor 顾问", desc: "停用后 advisor_ask 不可用，也不再注入使用边界提示。" },
             h(Toggle, { checked: draft.enabled, label: "启用 Advisor 顾问", onChange: (next: boolean) => patch({ enabled: next }) })),
           h(SRow, { title: "触发模式", desc: "auto：主模型按调用判据自主咨询；manual：仅用户明确要求时咨询。" },
-            h("select", {
-              style: { ...SET.control, width: 220 },
+            h(Select, {
               value: draft.mode,
+              width: 240,
+              ariaLabel: "触发模式",
               onChange: (e: React.ChangeEvent<HTMLSelectElement>) => patch({ mode: e.target.value as DraftConfig["mode"] }),
             },
               h("option", { value: "auto" }, "auto（主模型自主判断）"),
@@ -734,6 +776,8 @@ moduleLoaderWindow.__ModuleLoader__!.load({
           numRow("默认超时（毫秒）", "链上条目未单独配置超时时的单次调用上限。", draft.limits?.defaultTimeoutMs ?? 120000, 1000, 600000, 500, (v) => patch({ limits: { ...draft.limits, defaultTimeoutMs: v || 120000 } }), true)),
         // Sticky save bar: status announcements live here (aria-live), and the
         // unsaved-changes chip keeps the draft model from silently eating edits.
+        // Same background as the page so the bar blends in instead of reading
+        // as a gray band; only the hairline separates it from scrolled content.
         h("div", {
           style: {
             position: "sticky",
@@ -742,10 +786,10 @@ moduleLoaderWindow.__ModuleLoader__!.load({
             alignItems: "center",
             justifyContent: "flex-end",
             gap: 12,
-            padding: "12px 16px",
-            background: "var(--dsw-alias-bg-overlay)",
-            borderTop: "0.5px solid var(--dsw-alias-border-l2)",
-            borderRadius: "8px 8px 0 0",
+            padding: "10px 2px",
+            background: "var(--dsw-alias-bg-base)",
+            borderBottom: "none",
+            borderTop: "0.5px solid var(--dsw-alias-border-l1)",
           },
         },
           h("div", { role: "status", "aria-live": "polite", style: { flex: 1, minWidth: 0 } },

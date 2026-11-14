@@ -151,6 +151,30 @@ moduleLoaderWindow.__ModuleLoader__!.load({
         }
         return state;
       },
+      // A conversation Definition must declare target and buildViewNode
+      // together: this builds the chat-target view node for one assembled
+      // Context. The generic face is { key, kind, id, target, data }; the
+      // chat snapshot builder reads the extras (anchorSeq/location/visibility)
+      // at runtime — same technique the official chat definitions use.
+      buildViewNode(context: {
+        key?: string;
+        id?: string;
+        state?: CardState;
+        start?: { event?: { seq?: number }; location?: unknown };
+        matches?: Array<{ event?: { seq?: number }; location?: unknown }>;
+      }) {
+        if (context.state === undefined) return null;
+        return {
+          key: context.key,
+          kind: "dsh-advisor-plugin",
+          id: context.id,
+          target: "chat",
+          anchorSeq: context.start?.event?.seq ?? context.matches?.[0]?.event?.seq ?? 0,
+          location: context.start?.location ?? context.matches?.[0]?.location ?? { kind: "unresolved" },
+          visibility: "visible",
+          data: context.state,
+        };
+      },
     };
 
     // ---------- chat card view ----------

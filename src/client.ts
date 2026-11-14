@@ -424,43 +424,126 @@ moduleLoaderWindow.__ModuleLoader__!.load({
         children);
     }
 
-    /** Native-style select: appearance reset + drawn chevron overlay, so the
-     *  closed control matches the host's rounded, bordered selector (the
-     *  dropdown list itself stays browser-native). */
-    function Select({ value, onChange, width, ariaLabel, children }: {
+    /**
+     * Native-style dropdown: the closed control matches the host's rounded
+     * bordered selector, and the expanded list is a self-drawn listbox that
+     * mirrors the official popover (rounded card, hover highlight, checkmark
+     * on the selected option) — a <select>'s OS-rendered popup cannot be
+     * styled with CSS, so the whole listbox is drawn here. Keyboard: the
+     * closed trigger opens on ArrowUp/Down/Enter/Space; Escape closes;
+     * ArrowUp/Down move the highlight; Enter/Space select it. Outside
+     * mousedown closes via a containment check on the wrapper.
+     */
+    function Dropdown({ value, onChange, width, ariaLabel, options }: {
       value: string;
-      onChange: (e: React.ChangeEvent<HTMLSelectElement>) => void;
+      onChange: (e: { target: { value: string } }) => void;
       width: number | string;
       ariaLabel?: string;
-      children?: React.ReactNode;
+      options: Array<{ value: string; label: string }>;
     }) {
-      return h("div", { style: { position: "relative", display: "inline-flex", width } },
-        h("select", {
+      const [open, setOpen] = useState(false);
+      const [highlight, setHighlight] = useState(0);
+      const wrapRef = (React as { useRef?: (v: unknown) => { current: unknown } }).useRef?.(null) ?? { current: null };
+
+      useEffect(() => {
+        if (!open) return;
+        const close = (ev: Event) => {
+          const wrap = wrapRef.current as { contains?: (n: Node) => boolean } | null;
+          const target = (ev as MouseEvent).target as Node | null;
+          if (wrap?.contains?.(target as Node)) return;
+          setOpen(false);
+        };
+        document.addEventListener("mousedown", close);
+        return () => document.removeEventListener("mousedown", close);
+      }, [open]);
+
+      const select = (v: string) => {
+        onChange({ target: { value: v } });
+        setOpen(false);
+      };
+      const openAt = (index: number) => {
+        setHighlight(index);
+        setOpen(true);
+      };
+      const key = (ev: React.KeyboardEvent) => {
+        const selected = options.findIndex((o) => o.value === value);
+        if (!open && (ev.key === "ArrowDown" || ev.key === "ArrowUp" || ev.key === "Enter" || ev.key === " ")) {
+          ev.preventDefault();
+          openAt(selected >= 0 ? selected : 0);
+        } else if (open && ev.key === "Escape") {
+          setOpen(false);
+        } else if (open && (ev.key === "ArrowDown" || ev.key === "ArrowUp")) {
+          ev.preventDefault();
+          setHighlight((h) => Math.min(options.length - 1, Math.max(0, h + (ev.key === "ArrowDown" ? 1 : -1))));
+        } else if (open && (ev.key === "Enter" || ev.key === " ")) {
+          ev.preventDefault();
+          if (options[highlight]) select(options[highlight].value);
+        }
+      };
+      const current = options.find((o) => o.value === value);
+      return h("div", {
+        ref: (wrapRef as { current: unknown }).current === undefined ? undefined : (node: unknown) => { (wrapRef as { current: unknown }).current = node; },
+        style: { position: "relative", display: "inline-flex", width },
+      },
+        h("button", {
+          type: "button",
+          "aria-haspopup": "listbox",
+          "aria-expanded": open,
+          "aria-label": ariaLabel,
+          onClick: () => (open ? setOpen(false) : openAt(Math.max(0, options.findIndex((o) => o.value === value)))),
+          onKeyDown: key,
           style: {
             ...SET.control,
             width: "100%",
-            appearance: "none",
-            WebkitAppearance: "none",
-            MozAppearance: "none",
-            paddingRight: 28,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 8,
+            textAlign: "left",
             cursor: "pointer",
           },
-          value,
+        },
+          h("span", { style: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, current?.label ?? ""),
+          h("span", { "aria-hidden": true, style: { fontSize: 10, color: "var(--dsw-alias-label-secondary)", flexShrink: 0 } }, open ? "▴" : "▾")),
+        open ? h("div", {
+          role: "listbox",
           "aria-label": ariaLabel,
-          onChange,
-        }, children),
-        h("span", {
-          "aria-hidden": true,
           style: {
             position: "absolute",
-            right: 11,
-            top: "50%",
-            transform: "translateY(-50%)",
-            pointerEvents: "none",
-            fontSize: 10,
-            color: "var(--dsw-alias-label-secondary)",
+            top: "calc(100% + 4px)",
+            left: 0,
+            width: "100%",
+            minWidth: 160,
+            maxHeight: 240,
+            overflowY: "auto",
+            zIndex: 30,
+            background: "var(--dsw-alias-bg-overlay)",
+            border: "1px solid var(--dsw-alias-border-l1)",
+            borderRadius: 10,
+            padding: 4,
+            boxShadow: "0 4px 16px rgba(0,0,0,0.14)",
           },
-        }, "▾"));
+        }, options.map((o, i) => h("div", {
+          key: o.value,
+          role: "option",
+          "aria-selected": o.value === value,
+          onClick: () => select(o.value),
+          onMouseEnter: () => setHighlight(i),
+          style: {
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 8,
+            padding: "6px 10px",
+            borderRadius: 6,
+            fontSize: 13,
+            cursor: "pointer",
+            background: i === highlight ? "var(--dsw-alias-bg-layer-1)" : "transparent",
+            color: "var(--dsw-alias-label-primary)",
+          },
+        },
+          h("span", { style: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, o.label),
+          o.value === value ? h("span", { style: { color: "var(--dsw-alias-brand-primary)", flexShrink: 0 } }, "✓") : null))) : null);
     }
 
     function AdvisorSettingsTab() {
@@ -699,14 +782,15 @@ moduleLoaderWindow.__ModuleLoader__!.load({
               value: entry.label ?? "",
               onChange: (e: React.ChangeEvent<HTMLInputElement>) => patchEntry(index, { label: e.target.value }),
             })),
-            h(Field, { label: "Provider" }, h(Select, {
+            h(Field, { label: "Provider" }, h(Dropdown, {
               width: "100%",
               ariaLabel: "Provider",
               value: entry.provider,
-              onChange: (e: React.ChangeEvent<HTMLSelectElement>) => patchEntry(index, { provider: e.target.value }),
-            }, providers.length > 0
-              ? providers.map((p) => h("option", { key: p.id, value: p.id }, p.name || p.id))
-              : [h("option", { key: "cur", value: entry.provider }, entry.provider || "（未获取到供应商）")])),
+              options: providers.length > 0
+                ? providers.map((p) => ({ value: p.id, label: p.name || p.id }))
+                : [{ value: entry.provider, label: entry.provider || "（未获取到供应商）" }],
+              onChange: (e: { target: { value: string } }) => patchEntry(index, { provider: e.target.value }),
+            })),
             h(Field, { label: "模型 id" }, h("input", {
               style: { ...SET.control, width: "100%", boxSizing: "border-box" },
               list: `dsh-advisor-models-${index}`,
@@ -719,12 +803,13 @@ moduleLoaderWindow.__ModuleLoader__!.load({
                   modelOptions[entry.provider].map((id) => h("option", { key: id, value: id })))
               : null),
           h("div", { style: { display: "flex", gap: 12, flexWrap: "wrap", marginTop: 10 } },
-            h(Field, { label: "推理档位" }, h(Select, {
+            h(Field, { label: "推理档位" }, h(Dropdown, {
               width: 170,
               ariaLabel: "推理档位",
               value: entry.reasoningEffort ?? "",
-              onChange: (e: React.ChangeEvent<HTMLSelectElement>) => patchEntry(index, { reasoningEffort: e.target.value || undefined }),
-            }, EFFORTS.map((effort) => h("option", { key: effort.value, value: effort.value }, effort.label)))),
+              options: EFFORTS.map((effort) => ({ value: effort.value, label: effort.label })),
+              onChange: (e: { target: { value: string } }) => patchEntry(index, { reasoningEffort: e.target.value || undefined }),
+            })),
             h(Field, { label: "温度（0–2）" }, h("input", {
               style: { ...SET.control, width: 110 }, type: "number", min: 0, max: 2, step: 0.1,
               value: entry.temperature ?? "",
@@ -747,14 +832,16 @@ moduleLoaderWindow.__ModuleLoader__!.load({
           h(SRow, { title: "启用 Advisor 顾问", desc: "停用后 advisor_ask 不可用，也不再注入使用边界提示。" },
             h(Toggle, { checked: draft.enabled, label: "启用 Advisor 顾问", onChange: (next: boolean) => patch({ enabled: next }) })),
           h(SRow, { title: "触发模式", desc: "auto：主模型按调用判据自主咨询；manual：仅用户明确要求时咨询。" },
-            h(Select, {
+            h(Dropdown, {
               value: draft.mode,
               width: 240,
               ariaLabel: "触发模式",
-              onChange: (e: React.ChangeEvent<HTMLSelectElement>) => patch({ mode: e.target.value as DraftConfig["mode"] }),
-            },
-              h("option", { value: "auto" }, "auto（主模型自主判断）"),
-              h("option", { value: "manual" }, "manual（仅用户要求时）"))),
+              options: [
+                { value: "auto", label: "auto（主模型自主判断）" },
+                { value: "manual", label: "manual（仅用户要求时）" },
+              ],
+              onChange: (e: { target: { value: string } }) => patch({ mode: e.target.value as DraftConfig["mode"] }),
+            })),
           h("div", { style: SET.groupHead },
             h("div", null,
               h("div", { style: SET.title }, "顾问模型链"),

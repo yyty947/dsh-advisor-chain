@@ -509,8 +509,9 @@ moduleLoaderWindow.__ModuleLoader__!.load({
       }, [open]);
 
       const select = (v: string) => {
-        onChange({ target: { value: v } });
+        // Close first, then dispatch — the parent re-render never sees an open popover.
         setOpen(false);
+        onChange({ target: { value: v } });
       };
       const openAt = (index: number) => {
         setHighlight(index);
@@ -578,7 +579,13 @@ moduleLoaderWindow.__ModuleLoader__!.load({
           key: o.value,
           role: "option",
           "aria-selected": o.value === value,
-          onClick: () => select(o.value),
+          // Select on mousedown: fires before the document-level outside-close
+          // listener can race the click, and feels snappier than click.
+          onMouseDown: (ev: MouseEvent) => {
+            ev.stopPropagation();
+            select(o.value);
+          },
+          onClick: (ev: MouseEvent) => ev.stopPropagation(),
           onMouseEnter: () => setHighlight(i),
           style: {
             display: "flex",
@@ -605,6 +612,9 @@ moduleLoaderWindow.__ModuleLoader__!.load({
       const [nsByProvider, setNsByProvider] = useState<Record<string, string>>({});
       const [modelOptions, setModelOptions] = useState<Record<string, string[]>>({});
       const [fetchingProvider, setFetchingProvider] = useState<string | null>(null);
+      // Per-entry manual-entry mode for the model id: on = text input, off =
+      // pick from the fetched model list (when one exists).
+      const [manualModel, setManualModel] = useState<Record<number, boolean>>({});
       const [saving, setSaving] = useState(false);
       const [msg, setMsg] = useState("");
       const [error, setError] = useState("");
@@ -811,6 +821,37 @@ moduleLoaderWindow.__ModuleLoader__!.load({
             onChange: (e: React.ChangeEvent<HTMLInputElement>) => onChange(Number(e.target.value)),
           }));
 
+      const modelField = (index: number, entry: DraftChainEntry) => {
+        const models = modelOptions[entry.provider] ?? [];
+        const manual = !!manualModel[index] || models.length === 0;
+        const control = manual
+          ? h("input", {
+              style: { ...SET.control, width: "100%", boxSizing: "border-box" },
+              placeholder: "模型 id",
+              value: entry.model,
+              onChange: (e: React.ChangeEvent<HTMLInputElement>) => patchEntry(index, { model: e.target.value }),
+            })
+          : h(Dropdown, {
+              width: "100%",
+              ariaLabel: "模型 id",
+              value: entry.model,
+              options: [
+                ...models.map((id) => ({ value: id, label: id })),
+                ...(entry.model && !models.includes(entry.model) ? [{ value: entry.model, label: entry.model }] : []),
+              ],
+              onChange: (e: { target: { value: string } }) => patchEntry(index, { model: e.target.value }),
+            });
+        return h(Field, { label: manual ? "模型 id（手动输入）" : "模型 id" },
+          h("div", { style: { display: "flex", gap: 6, width: "100%" } },
+            control,
+            models.length > 0
+              ? h("button", {
+                  style: SET.btn, type: "button", title: manual ? "从已获取的模型列表中选择" : "手动输入其他模型 id",
+                  onClick: () => setManualModel((prev) => ({ ...prev, [index]: !manual })),
+                }, manual ? "列表选择" : "⌨")
+              : null));
+      };
+
       const entryNode = (index: number, entry: DraftChainEntry) =>
         h("div", { key: index, style: SET.entry },
           h("div", { style: { display: "flex", alignItems: "center", gap: 8, marginBottom: 10 } },
@@ -842,17 +883,7 @@ moduleLoaderWindow.__ModuleLoader__!.load({
                 : [{ value: entry.provider, label: entry.provider || "（未获取到供应商）" }],
               onChange: (e: { target: { value: string } }) => patchEntry(index, { provider: e.target.value }),
             })),
-            h(Field, { label: "模型 id" }, h("input", {
-              style: { ...SET.control, width: "100%", boxSizing: "border-box" },
-              list: `dsh-advisor-models-${index}`,
-              placeholder: "模型 id",
-              value: entry.model,
-              onChange: (e: React.ChangeEvent<HTMLInputElement>) => patchEntry(index, { model: e.target.value }),
-            })),
-            (modelOptions[entry.provider] ?? []).length > 0
-              ? h("datalist", { id: `dsh-advisor-models-${index}` },
-                  modelOptions[entry.provider].map((id) => h("option", { key: id, value: id })))
-              : null),
+            modelField(index, entry)),
           h("div", { style: { display: "flex", gap: 12, flexWrap: "wrap", marginTop: 10 } },
             h(Field, { label: "推理档位" }, h(Dropdown, {
               width: 170,

@@ -88,7 +88,7 @@ export function createSecondOpinionTool(deps: AdvisorAskDeps) {
       },
       dual_opinions: {
         type: "boolean",
-        description: "可选。true 时并行咨询链上前两位顾问（互不可见对方），返回两份独立意见；需链上至少 2 个模型；不支持追问。",
+        description: "可选。true 时并行咨询链上前两位顾问（互不可见对方；链上仅一个模型时，同一模型独立采样两次），返回两份独立意见；不支持追问。",
       },
     },
     output: {
@@ -235,10 +235,10 @@ export function createSecondOpinionTool(deps: AdvisorAskDeps) {
             });
 
       if (args.dual_opinions) {
-        if (cfg.chain.length < 2) {
-          return fail("双意见对比需要顾问链上至少配置 2 个模型（设置 → Second Opinion）。");
-        }
+        // Two independent samples: the first two chain entries — or, when the
+        // chain has a single model, the same model asked twice independently.
         const pair = cfg.chain.slice(0, 2);
+        if (pair.length === 1) pair.push(pair[0]);
         appendAdvisorStart(sessionLog ?? {}, {
           consultId,
           question,

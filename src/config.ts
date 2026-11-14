@@ -51,6 +51,7 @@ export const Config = Schema.object({
   contextMode: Schema.union([Schema.const("inherited"), Schema.const("standalone")]).default("inherited").volatile().description("默认咨询模式：inherited 顾问自动继承完整对话；standalone 盲审，顾问只看问题与补充背景。可被工具的 mode 参数按次覆盖。"),
   advisorPrompt: Schema.string().default(DEFAULT_ADVISOR_PROMPT).volatile().description("顾问的系统提示词（整条链共用）。"),
   chain: Schema.array(ChainEntryConfig).default([]).volatile().description("顾问模型链，按顺序尝试；前面的失败（出错或超时无产出）时顺延到下一个。"),
+  modelCatalog: Schema.dict(Schema.array(Schema.string())).default({}).volatile().description("已获取的模型列表缓存（provider → 模型 id 列表），由设置页的「获取模型列表」维护与刷新。"),
   trigger: TriggerConfig.volatile(),
   limits: LimitsConfig.volatile(),
 });
@@ -72,6 +73,9 @@ export type AdvisorConfig = {
   contextMode: "inherited" | "standalone";
   advisorPrompt: string;
   chain: ChainEntry[];
+  /** Persisted cache of fetched model lists, keyed by provider. Client-only
+   *  concern; the host tool never reads it. */
+  modelCatalog: Record<string, string[]>;
   trigger: { repeatThreshold: number };
   limits: { defaultTimeoutMs: number; transcriptMaxChars: number; perEntryMaxChars: number };
 };
@@ -106,6 +110,16 @@ export function normalizeConfig(raw: unknown): AdvisorConfig {
     chain: Array.isArray(cfg.chain)
       ? cfg.chain.filter((e): e is ChainEntry => !!e && typeof e === "object" && typeof e.provider === "string" && e.provider.length > 0 && typeof e.model === "string" && e.model.length > 0)
       : [],
+    modelCatalog: (() => {
+      const rawCatalog = cfg.modelCatalog;
+      const out: Record<string, string[]> = {};
+      if (rawCatalog && typeof rawCatalog === "object") {
+        for (const [key, list] of Object.entries(rawCatalog as Record<string, unknown>)) {
+          if (Array.isArray(list)) out[key] = list.filter((id): id is string => typeof id === "string");
+        }
+      }
+      return out;
+    })(),
     trigger: { repeatThreshold: cfg.trigger?.repeatThreshold ?? 3 },
     limits: {
       defaultTimeoutMs: cfg.limits?.defaultTimeoutMs ?? 120000,

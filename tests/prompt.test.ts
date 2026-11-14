@@ -79,4 +79,15 @@ describe("normalizeConfig", () => {
     expect(cfg.mode).toBe("manual");
     expect(cfg.chain[0].provider).toBe("p");
   });
+
+  it("preserves the persisted model catalog and drops malformed entries", () => {
+    const cfg = normalizeConfig({
+      modelCatalog: {
+        "zai-coding-cn": ["glm-5.3", 42, null, "glm-5.3-flash"],
+        broken: "not-an-array",
+      },
+    });
+    expect(cfg.modelCatalog).toEqual({ "zai-coding-cn": ["glm-5.3", "glm-5.3-flash"] });
+    expect(cfg.modelCatalog).not.toHaveProperty("broken");
+  });
 });

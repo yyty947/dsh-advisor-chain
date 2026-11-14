@@ -265,6 +265,7 @@ moduleLoaderWindow.__ModuleLoader__!.load({
       mode: "auto" | "manual";
       contextMode: "inherited" | "standalone";
       advisorPrompt: string;
+      modelCatalog: Record<string, string[]>;
       chain: DraftChainEntry[];
       trigger: { repeatThreshold: number };
       limits: { defaultTimeoutMs: number; transcriptMaxChars: number; perEntryMaxChars: number };
@@ -640,6 +641,10 @@ moduleLoaderWindow.__ModuleLoader__!.load({
           setDraft(ns.value as DraftConfig);
           setRevision(ns.revision);
           setSavedSnapshot(JSON.stringify(ns.value));
+          // Seed the model pickers from the persisted catalog so dropdowns
+          // work immediately without re-fetching.
+          const persistedCatalog = (ns.value as DraftConfig).modelCatalog ?? {};
+          setModelOptions((prev) => ({ ...persistedCatalog, ...prev }));
           const [provs, confs] = await Promise.all([
             remote.llm.listProviders().catch(() => undefined),
             remote.llm.listConfigurableProviders().catch(() => undefined),
@@ -740,11 +745,14 @@ moduleLoaderWindow.__ModuleLoader__!.load({
           if (models.length > 0) {
             setError("");
             setModelOptions((prev) => ({ ...prev, [provider]: models }));
+            // Fold the fetched list into the draft so 保存 persists it into
+            // the plugin config (survives restarts and page reloads).
+            setDraft((d) => (d ? { ...d, modelCatalog: { ...d.modelCatalog, [provider]: models } } : d));
             const sources = [
               stored.models.length > 0 ? `DSH 配置 ${stored.models.length} 个` : "",
               discoveryNote === "" && settingsNs ? "端点探测" : "",
             ].filter(Boolean).join(" + ");
-            setMsg(`已加载 ${models.length} 个模型（${sources}），下拉中可选。${discoveryNote ? ` 端点探测未成功：${discoveryNote}` : ""}`);
+            setMsg(`已加载 ${models.length} 个模型（${sources}），下拉中可选。保存后列表会持久化，下次打开无需重新获取。${discoveryNote ? ` 端点探测未成功：${discoveryNote}` : ""}`);
           } else if (/no model discovery is registered/i.test(discoveryNote)) {
             setMsg("");
             setError("该供应商的适配器没有提供模型发现，请直接手动填写模型 id（可从 设置 → 模型 里复制）。");

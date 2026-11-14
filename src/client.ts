@@ -21,9 +21,9 @@ moduleLoaderWindow.__ModuleLoader__!.load({
 
     // ---------- shared styles (theme tokens with literal fallbacks) ----------
     const cardStyle: React.CSSProperties = {
-      border: "1px solid var(--dsw-alias-color-border, rgba(127,127,127,.35))",
+      border: "1px solid var(--dsw-alias-border-l1)",
       borderRadius: 10,
-      background: "var(--dsw-alias-color-bg-subtle, rgba(127,127,127,.06))",
+      background: "var(--dsw-alias-bg-layer-1)",
       padding: "10px 12px",
       margin: "6px 0",
       fontSize: 13,
@@ -35,7 +35,7 @@ moduleLoaderWindow.__ModuleLoader__!.load({
       borderRadius: 8,
       fontSize: 11,
       lineHeight: "18px",
-      color: "#fff",
+      color: "var(--dsw-alias-bg-base)",
       background: color,
       marginLeft: 6,
     });
@@ -44,28 +44,9 @@ moduleLoaderWindow.__ModuleLoader__!.load({
     const toggleStyle: React.CSSProperties = {
       background: "transparent",
       border: "none",
-      color: "var(--dsw-alias-color-link, #3b82f6)",
+      color: "var(--dsw-alias-brand-primary)",
       cursor: "pointer",
       padding: 0,
-      fontSize: 12,
-    };
-    const inputStyle: React.CSSProperties = {
-      boxSizing: "border-box",
-      width: "100%",
-      padding: "4px 8px",
-      borderRadius: 6,
-      border: "1px solid var(--dsw-alias-color-border, rgba(127,127,127,.4))",
-      background: "var(--dsw-alias-color-bg, transparent)",
-      color: "inherit",
-      fontSize: 13,
-    };
-    const buttonStyle: React.CSSProperties = {
-      padding: "3px 10px",
-      borderRadius: 6,
-      border: "1px solid var(--dsw-alias-color-border, rgba(127,127,127,.4))",
-      background: "transparent",
-      color: "inherit",
-      cursor: "pointer",
       fontSize: 12,
     };
 
@@ -194,14 +175,14 @@ moduleLoaderWindow.__ModuleLoader__!.load({
       const thinking = message?.thinking || data.liveThinking;
       const failed = data.status === "failed";
       const running = data.status === "running";
-      const statusBadge = failed ? badgeStyle("#dc2626") : running ? badgeStyle("#d97706") : badgeStyle("#16a34a");
+      const statusBadge = failed ? badgeStyle("var(--dsw-alias-state-error-primary)") : running ? badgeStyle("var(--dsw-alias-state-warn-primary)") : badgeStyle("var(--dsw-alias-state-success-primary)");
       const statusText = failed ? "失败" : running ? "咨询中…" : "完成";
       return h("div", { style: cardStyle },
         h("div", null,
           h("span", { style: labelStyle }, "顾问咨询"),
           h("span", { style: statusBadge }, statusText),
-          message ? h("span", { style: badgeStyle("#2563eb") }, message.model) : null,
-          data.truncated ? h("span", { style: badgeStyle("#b45309") }, "已截断") : null),
+          message ? h("span", { style: badgeStyle("var(--dsw-alias-brand-primary)") }, message.model) : null,
+          data.truncated ? h("span", { style: badgeStyle("var(--dsw-alias-state-warn-primary)") }, "已截断") : null),
         h("div", { style: { fontWeight: 600, margin: "6px 0 2px" } }, data.question),
         data.context ? h("div", null,
           h("button", { style: toggleStyle, type: "button", onClick: () => setContextOpen(!contextOpen) }, `${contextOpen ? "▾" : "▸"} 补充背景`),
@@ -209,7 +190,7 @@ moduleLoaderWindow.__ModuleLoader__!.load({
         thinking && thinking.trim() ? h(Fold, { title: "顾问思考过程" }, thinking) : null,
         content ? h("div", { style: { whiteSpace: "pre-wrap", marginTop: 6 } }, content, running ? "▍" : null) : null,
         !content && running && !thinking ? h("div", { style: smallStyle }, `正在咨询 ${data.chain?.[data.currentAttempt]?.label ?? ""} …`) : null,
-        data.attempts.length > 0 ? h("div", { style: { marginTop: 8, ...smallStyle } },
+        data.attempts?.length ? h("div", { style: { marginTop: 8, ...smallStyle } },
           "尝试记录：",
           data.attempts.map((attempt, i) => h("span", { key: i },
             i > 0 ? " → " : "",
@@ -293,6 +274,10 @@ moduleLoaderWindow.__ModuleLoader__!.load({
       root: {
         width: "100%",
         color: "var(--dsw-alias-label-primary)",
+        // The host defines --dsw-font-family in its own CSS (Inter + CJK
+        // stack); without it Chinese glyphs fall back to a serif default.
+        // Not in the Theme-inspected alias list, but it is the host's own
+        // public font variable — no font files are bundled (MIT repo).
         fontFamily: "var(--dsw-font-family, inherit)",
       } as React.CSSProperties,
       row: {
@@ -361,7 +346,9 @@ moduleLoaderWindow.__ModuleLoader__!.load({
         padding: "0 18px",
         borderRadius: 8,
         border: "1px solid transparent",
-        background: "var(--dsw-alias-brand-primary)",
+        // label-primary on bg-base is an inverted fill that keeps AA contrast
+        // in both themes (brand-primary text pairing was contrast-risky).
+        background: "var(--dsw-alias-label-primary)",
         color: "var(--dsw-alias-bg-base)",
         fontSize: 13,
         cursor: "pointer",
@@ -378,8 +365,11 @@ moduleLoaderWindow.__ModuleLoader__!.load({
     };
 
     /** Native-style pill switch (role="switch" + aria-checked kept; the
-     *  visual mirrors the shipped settings toggle with token colors). */
+     *  visual mirrors the shipped settings toggle with token colors).
+     *  The focus ring is emulated through state because inline styles
+     *  cannot express :focus-visible; disabled dims via opacity. */
     function Toggle({ checked, onChange, label, disabled }: { checked: boolean; onChange: (next: boolean) => void; label: string; disabled?: boolean }) {
+      const [focused, setFocused] = useState(false);
       return h("button", {
         role: "switch",
         "aria-checked": checked,
@@ -387,15 +377,20 @@ moduleLoaderWindow.__ModuleLoader__!.load({
         type: "button",
         disabled,
         onClick: () => onChange(!checked),
+        onFocus: () => setFocused(true),
+        onBlur: () => setFocused(false),
         style: {
           position: "relative",
           width: 40,
           height: 22,
           borderRadius: 999,
-          border: "none",
+          border: checked ? "none" : "1px solid var(--dsw-alias-border-l1)",
           padding: 0,
           cursor: disabled ? "default" : "pointer",
-          background: checked ? "var(--dsw-alias-label-primary)" : "var(--dsw-alias-border-l2)",
+          opacity: disabled ? 0.4 : 1,
+          background: checked ? "var(--dsw-alias-brand-primary)" : "var(--dsw-alias-bg-layer-2)",
+          outline: focused ? "2px solid var(--dsw-alias-brand-primary)" : "none",
+          outlineOffset: 1,
           transition: "background 160ms ease",
         },
       }, h("span", {
@@ -415,15 +410,16 @@ moduleLoaderWindow.__ModuleLoader__!.load({
     /** One native-style settings row: title + description left, control right. */
     function SRow({ title, desc, last, children }: { title: string; desc?: string; last?: boolean; children?: React.ReactNode }) {
       return h("div", { style: { ...SET.row, ...(last ? { borderBottom: "none" } : null) } },
-        h("div", null,
+        h("div", { style: { minWidth: 0 } },
           h("div", { style: SET.title }, title),
           desc ? h("div", { style: SET.desc }, desc) : null),
         children ?? null);
     }
 
-    /** Labeled field: 12px secondary label above one control. */
+    /** Labeled field: the label wraps its control (implicit association), so
+     *  clicking the label focuses the control and screen readers announce it. */
     function Field({ label, children }: { label: string; children?: React.ReactNode }) {
-      return h("div", { style: { display: "flex", flexDirection: "column", gap: 4, minWidth: 0 } },
+      return h("label", { style: { display: "flex", flexDirection: "column", gap: 4, minWidth: 0 } },
         h("span", { style: SET.fieldLabel }, label),
         children);
     }
@@ -439,10 +435,11 @@ moduleLoaderWindow.__ModuleLoader__!.load({
       const [saving, setSaving] = useState(false);
       const [msg, setMsg] = useState("");
       const [error, setError] = useState("");
+      // Draft vs last-saved snapshot: drives the unsaved-changes bar (H1).
+      const [savedSnapshot, setSavedSnapshot] = useState("");
 
-      const reload = async () => {
-        setMsg("");
-        setError("");
+      const reload = async (opts?: { silent?: boolean }) => {
+        if (!opts?.silent) { setMsg(""); setError(""); }
         try {
           const remote = getRemote(currentCtx);
           if (!remote) {
@@ -459,6 +456,7 @@ moduleLoaderWindow.__ModuleLoader__!.load({
           }
           setDraft(ns.value as DraftConfig);
           setRevision(ns.revision);
+          setSavedSnapshot(JSON.stringify(ns.value));
           const [provs, confs] = await Promise.all([
             remote.llm.listProviders().catch(() => undefined),
             remote.llm.listConfigurableProviders().catch(() => undefined),
@@ -469,6 +467,9 @@ moduleLoaderWindow.__ModuleLoader__!.load({
               ? Object.fromEntries(confs.value.map((c) => [c.provider, c.settingsNs]))
               : {},
           );
+          if (provs === undefined || confs === undefined) {
+            setError("供应商列表获取失败（设置 → 模型 页可能尚未就绪）；仍可手动输入 provider 和模型 id。");
+          }
         } catch (e) {
           setError(e instanceof Error ? e.message : String(e));
         }
@@ -554,6 +555,7 @@ moduleLoaderWindow.__ModuleLoader__!.load({
             }
           }
           if (models.length > 0) {
+            setError("");
             setModelOptions((prev) => ({ ...prev, [provider]: models }));
             const sources = [
               stored.models.length > 0 ? `DSH 配置 ${stored.models.length} 个` : "",
@@ -561,10 +563,13 @@ moduleLoaderWindow.__ModuleLoader__!.load({
             ].filter(Boolean).join(" + ");
             setMsg(`已加载 ${models.length} 个模型（${sources}），下拉中可选。${discoveryNote ? ` 端点探测未成功：${discoveryNote}` : ""}`);
           } else if (/no model discovery is registered/i.test(discoveryNote)) {
+            setMsg("");
             setError("该供应商的适配器没有提供模型发现，请直接手动填写模型 id（可从 设置 → 模型 里复制）。");
           } else if (/baseURL/i.test(discoveryNote)) {
+            setMsg("");
             setError("该自定义供应商需要先在 设置 → 模型 里配置 baseURL（保存后回来重新获取），或直接手动填写模型 id。");
           } else {
+            setMsg("");
             setError(`获取模型列表失败：${discoveryNote || "无可用来源"}。可直接手动填写模型 id。`);
           }
         } finally {
@@ -579,15 +584,34 @@ moduleLoaderWindow.__ModuleLoader__!.load({
         setError("");
         try {
           const remote = getRemote(currentCtx)!;
-          const view = unwrap(await remote.settings.update(NS, draft, revision), "保存设置");
+          // Sanitize before persisting: drop unfinished entries and clamp
+          // numeric ranges (number-input min/max only constrain the spinner).
+          const dropped = draft.chain.filter((e) => !e.provider || !e.model).length;
+          const clamp = (v: number | undefined, lo: number, hi: number) =>
+            v === undefined ? undefined : Math.min(hi, Math.max(lo, Math.round(v)));
+          const sanitized: DraftConfig = {
+            ...draft,
+            chain: draft.chain
+              .filter((e) => e.provider && e.model)
+              .map((e) => ({
+                ...e,
+                temperature: clamp(e.temperature, 0, 2),
+                maxTokens: clamp(e.maxTokens, 1, 1000000),
+                timeoutMs: clamp(e.timeoutMs, 1000, 600000),
+              })),
+          };
+          const view = unwrap(await remote.settings.update(NS, sanitized, revision), "保存设置");
           setRevision(view.revision);
           setDraft(view.value);
-          setMsg("已保存并即时生效。");
+          setSavedSnapshot(JSON.stringify(view.value));
+          setMsg(`已保存并即时生效。${dropped > 0 ? ` 已忽略 ${dropped} 个未填 provider/模型 的未完成条目。` : ""}`);
         } catch (e) {
           const message = e instanceof Error ? e.message : String(e);
           if (/conflict|stale/i.test(message)) {
-            setError("配置已被其他页面修改，正在重新加载…");
-            await reload();
+            // Reload the freshest config without clearing messages first, then
+            // SAY that the draft was replaced — never drop changes silently.
+            await reload({ silent: true });
+            setMsg("检测到配置已被外部修改：已重新加载最新配置，未保存的修改已被替换，请重新调整后再保存。");
           } else {
             setError(`保存失败：${message}`);
           }
@@ -598,14 +622,19 @@ moduleLoaderWindow.__ModuleLoader__!.load({
 
       if (!draft) {
         return h("li", { className: "dsh-advisor-plugin-settings", style: { ...SET.root, listStyle: "none", padding: 0, margin: 0 } },
-          h("div", { style: SET.desc }, error || "加载配置中…"));
+          h("div", { style: SET.row },
+            h("div", { style: error ? SET.msgErr : SET.desc }, error || "加载配置中…"),
+            error ? h("button", { style: SET.btn, type: "button", onClick: () => reload() }, "重试") : null));
       }
+
+      const dirty = savedSnapshot !== "" && JSON.stringify(draft) !== savedSnapshot;
 
       const numRow = (title: string, desc: string, value: number, min: number, max: number, step: number, onChange: (v: number) => void, last = false) =>
         h("div", { style: { ...SET.row, ...(last ? { borderBottom: "none" } : null) } },
-          h("div", null, h("div", { style: SET.title }, title), h("div", { style: SET.desc }, desc)),
+          h("div", { style: { minWidth: 0 } }, h("div", { style: SET.title }, title), h("div", { style: SET.desc }, desc)),
           h("input", {
             style: { ...SET.control, width: 110 }, type: "number", min, max, step, value,
+            "aria-label": title, disabled: saving,
             onChange: (e: React.ChangeEvent<HTMLInputElement>) => onChange(Number(e.target.value)),
           }));
 
@@ -615,12 +644,14 @@ moduleLoaderWindow.__ModuleLoader__!.load({
             h("span", { style: { ...SET.desc, marginTop: 0, width: 22 } }, `#${index + 1}`),
             h("span", { style: { flex: 1 } }),
             h("button", {
-              style: SET.btn, type: "button",
+              style: { ...SET.btn, opacity: fetchingProvider === entry.provider || !entry.provider ? 0.5 : 1 },
+              type: "button",
+              title: !entry.provider ? "先选择 provider 后再获取模型列表" : undefined,
               disabled: fetchingProvider === entry.provider || !entry.provider,
               onClick: () => fetchModels(entry.provider),
             }, fetchingProvider === entry.provider ? "获取中…" : "获取模型列表"),
-            h("button", { style: SET.btn, type: "button", "aria-label": "上移", onClick: () => moveEntry(index, -1), disabled: index === 0 }, "↑"),
-            h("button", { style: SET.btn, type: "button", "aria-label": "下移", onClick: () => moveEntry(index, 1), disabled: index === draft.chain.length - 1 }, "↓"),
+            h("button", { style: SET.btn, type: "button", "aria-label": "上移", title: "上移", onClick: () => moveEntry(index, -1), disabled: index === 0 }, "↑"),
+            h("button", { style: SET.btn, type: "button", "aria-label": "下移", title: "下移", onClick: () => moveEntry(index, 1), disabled: index === draft.chain.length - 1 }, "↓"),
             h("button", { style: SET.btn, type: "button", onClick: () => removeEntry(index) }, "删除")),
           h("div", { style: { display: "flex", gap: 12, flexWrap: "wrap" } },
             h(Field, { label: "显示名（可选）" }, h("input", {
@@ -635,16 +666,16 @@ moduleLoaderWindow.__ModuleLoader__!.load({
               onChange: (e: React.ChangeEvent<HTMLSelectElement>) => patchEntry(index, { provider: e.target.value }),
             }, providers.length > 0
               ? providers.map((p) => h("option", { key: p.id, value: p.id }, p.name || p.id))
-              : h("option", { value: entry.provider }, entry.provider))),
+              : [h("option", { key: "cur", value: entry.provider }, entry.provider || "（未获取到供应商）")])),
             h(Field, { label: "模型 id" }, h("input", {
               style: { ...SET.control, width: "100%", boxSizing: "border-box" },
-              list: `dsh-advisor-models-${entry.provider || index}`,
+              list: `dsh-advisor-models-${index}`,
               placeholder: "模型 id",
               value: entry.model,
               onChange: (e: React.ChangeEvent<HTMLInputElement>) => patchEntry(index, { model: e.target.value }),
             })),
             (modelOptions[entry.provider] ?? []).length > 0
-              ? h("datalist", { id: `dsh-advisor-models-${entry.provider || index}` },
+              ? h("datalist", { id: `dsh-advisor-models-${index}` },
                   modelOptions[entry.provider].map((id) => h("option", { key: id, value: id })))
               : null),
           h("div", { style: { display: "flex", gap: 12, flexWrap: "wrap", marginTop: 10 } },
@@ -670,38 +701,57 @@ moduleLoaderWindow.__ModuleLoader__!.load({
             }))));
 
       return h("li", { className: "dsh-advisor-plugin-settings", style: { ...SET.root, listStyle: "none", padding: 0, margin: 0 } },
-        h(SRow, { title: "启用 Advisor 顾问", desc: "停用后 advisor_ask 不可用，也不再注入使用边界提示。" },
-          h(Toggle, { checked: draft.enabled, label: "启用 Advisor 顾问", onChange: (next: boolean) => patch({ enabled: next }) })),
-        h(SRow, { title: "触发模式", desc: "auto：主模型按调用判据自主咨询；manual：仅用户明确要求时咨询。" },
-          h("select", {
-            style: { ...SET.control, width: 220 },
-            value: draft.mode,
-            onChange: (e: React.ChangeEvent<HTMLSelectElement>) => patch({ mode: e.target.value as DraftConfig["mode"] }),
+        // Saving locks every control below (M3): responses never race edits.
+        h("div", { style: { pointerEvents: saving ? "none" : "auto", opacity: saving ? 0.6 : 1 } },
+          h(SRow, { title: "启用 Advisor 顾问", desc: "停用后 advisor_ask 不可用，也不再注入使用边界提示。" },
+            h(Toggle, { checked: draft.enabled, label: "启用 Advisor 顾问", onChange: (next: boolean) => patch({ enabled: next }) })),
+          h(SRow, { title: "触发模式", desc: "auto：主模型按调用判据自主咨询；manual：仅用户明确要求时咨询。" },
+            h("select", {
+              style: { ...SET.control, width: 220 },
+              value: draft.mode,
+              onChange: (e: React.ChangeEvent<HTMLSelectElement>) => patch({ mode: e.target.value as DraftConfig["mode"] }),
+            },
+              h("option", { value: "auto" }, "auto（主模型自主判断）"),
+              h("option", { value: "manual" }, "manual（仅用户要求时）"))),
+          h("div", { style: SET.groupHead },
+            h("div", null,
+              h("div", { style: SET.title }, "顾问模型链"),
+              h("div", { style: SET.desc }, "按顺序尝试；某项失败（出错或超时无产出）自动顺延下一个。")),
+            h("button", { style: SET.btn, type: "button", onClick: addEntry }, "＋ 添加顾问模型")),
+          ...draft.chain.map((entry, index) => entryNode(index, entry)),
+          draft.chain.length === 0 ? h("div", { style: { ...SET.desc, padding: "0 0 12px" } }, "尚未配置顾问模型——配置后 advisor_ask 才可用。") : null,
+          h("div", { style: { padding: "16px 0", borderBottom: "0.5px solid var(--dsw-alias-border-l2)" } },
+            h("div", { style: SET.title }, "顾问系统提示词"),
+            h("div", { style: SET.desc }, "整条链共用；清空并保存可回落到插件默认。"),
+            h("textarea", {
+              style: SET.textarea,
+              value: draft.advisorPrompt,
+              onChange: (e: React.ChangeEvent<HTMLTextAreaElement>) => patch({ advisorPrompt: e.target.value }),
+            })),
+          numRow("重复提问强制咨询阈值", "同一用户问题重复达到该次数时，提示升级为强制咨询（单位：次）。", draft.trigger?.repeatThreshold ?? 3, 2, 10, 1, (v) => patch({ trigger: { repeatThreshold: Math.min(10, Math.max(2, v || 3)) } })),
+          numRow("抄本字符预算", "发送给顾问的对话抄本总字符上限；超出时保留最新部分并标注省略。", draft.limits?.transcriptMaxChars ?? 60000, 2000, 400000, 1000, (v) => patch({ limits: { ...draft.limits, transcriptMaxChars: v || 60000 } })),
+          numRow("单条消息上限", "抄本中单条消息（含工具结果）的最大字符数。", draft.limits?.perEntryMaxChars ?? 2000, 200, 20000, 100, (v) => patch({ limits: { ...draft.limits, perEntryMaxChars: v || 2000 } })),
+          numRow("默认超时（毫秒）", "链上条目未单独配置超时时的单次调用上限。", draft.limits?.defaultTimeoutMs ?? 120000, 1000, 600000, 500, (v) => patch({ limits: { ...draft.limits, defaultTimeoutMs: v || 120000 } }), true)),
+        // Sticky save bar: status announcements live here (aria-live), and the
+        // unsaved-changes chip keeps the draft model from silently eating edits.
+        h("div", {
+          style: {
+            position: "sticky",
+            bottom: 0,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "flex-end",
+            gap: 12,
+            padding: "12px 16px",
+            background: "var(--dsw-alias-bg-overlay)",
+            borderTop: "0.5px solid var(--dsw-alias-border-l2)",
+            borderRadius: "8px 8px 0 0",
           },
-            h("option", { value: "auto" }, "auto（主模型自主判断）"),
-            h("option", { value: "manual" }, "manual（仅用户要求时）"))),
-        h("div", { style: SET.groupHead },
-          h("div", null,
-            h("div", { style: SET.title }, "顾问模型链"),
-            h("div", { style: SET.desc }, "按顺序尝试；某项失败（出错或超时无产出）自动顺延下一个。")),
-          h("button", { style: SET.btn, type: "button", onClick: addEntry }, "＋ 添加顾问模型")),
-        ...draft.chain.map((entry, index) => entryNode(index, entry)),
-        draft.chain.length === 0 ? h("div", { style: { ...SET.desc, padding: "0 0 12px" } }, "尚未配置顾问模型——配置后 advisor_ask 才可用。") : null,
-        h("div", { style: { padding: "16px 0", borderBottom: "0.5px solid var(--dsw-alias-border-l2)" } },
-          h("div", { style: SET.title }, "顾问系统提示词"),
-          h("div", { style: SET.desc }, "整条链共用；清空并保存可回落到插件默认。"),
-          h("textarea", {
-            style: SET.textarea,
-            value: draft.advisorPrompt,
-            onChange: (e: React.ChangeEvent<HTMLTextAreaElement>) => patch({ advisorPrompt: e.target.value }),
-          })),
-        numRow("重复提问强制咨询阈值", "同一用户问题重复达到该次数时，提示升级为强制咨询（单位：次）。", draft.trigger?.repeatThreshold ?? 3, 2, 10, 1, (v) => patch({ trigger: { repeatThreshold: Math.min(10, Math.max(2, v || 3)) } })),
-        numRow("抄本字符预算", "发送给顾问的对话抄本总字符上限；超出时保留最新部分并标注省略。", draft.limits?.transcriptMaxChars ?? 60000, 2000, 400000, 1000, (v) => patch({ limits: { ...draft.limits, transcriptMaxChars: v || 60000 } })),
-        numRow("单条消息上限", "抄本中单条消息（含工具结果）的最大字符数。", draft.limits?.perEntryMaxChars ?? 2000, 200, 20000, 100, (v) => patch({ limits: { ...draft.limits, perEntryMaxChars: v || 2000 } })),
-        numRow("默认超时（毫秒）", "链上条目未单独配置超时时的单次调用上限。", draft.limits?.defaultTimeoutMs ?? 120000, 1000, 600000, 500, (v) => patch({ limits: { ...draft.limits, defaultTimeoutMs: v || 120000 } }), true),
-        h("div", { style: { display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 12, padding: "16px 0 4px" } },
-          msg ? h("span", { style: SET.msgOk }, msg) : null,
-          error ? h("span", { style: SET.msgErr }, error) : null,
+        },
+          h("div", { role: "status", "aria-live": "polite", style: { flex: 1, minWidth: 0 } },
+            error ? h("span", { style: SET.msgErr }, error) : msg ? h("span", { style: SET.msgOk }, msg) : null),
+          dirty ? h("span", { style: SET.msgErr }, "有未保存更改") : null,
+          dirty ? h("button", { style: SET.btn, type: "button", onClick: () => reload({ silent: true }) }, "放弃修改") : null,
           h("button", { style: SET.btnPrimary, type: "button", disabled: saving, onClick: save }, saving ? "保存中…" : "保存")));
     }
 

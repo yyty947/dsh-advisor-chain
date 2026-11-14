@@ -854,7 +854,10 @@ moduleLoaderWindow.__ModuleLoader__!.load({
             control,
             models.length > 0
               ? h("button", {
-                  style: SET.btn, type: "button", title: manual ? "从已获取的模型列表中选择" : "手动输入其他模型 id",
+                  // Shares a row with the 32px input: match its height, keep
+                  // the label on one line, never squeeze it.
+                  style: { ...SET.btn, height: 32, whiteSpace: "nowrap", flexShrink: 0 },
+                  type: "button", title: manual ? "从已获取的模型列表中选择" : "手动输入其他模型 id",
                   onClick: () => setManualModel((prev) => ({ ...prev, [index]: !manual })),
                 }, manual ? "列表选择" : "⌨")
               : null));

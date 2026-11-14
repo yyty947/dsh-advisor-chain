@@ -5,6 +5,7 @@ import { DEFAULT_ADVISOR_PROMPT, normalizeConfig } from "../src/config";
 const base = {
   enabled: true,
   mode: "auto" as const,
+  contextMode: "inherited" as const,
   advisorPrompt: DEFAULT_ADVISOR_PROMPT,
   chain: [{ provider: "p", model: "m" }],
   trigger: { repeatThreshold: 3 },

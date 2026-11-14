@@ -48,6 +48,7 @@ export const LimitsConfig = Schema.object({
 export const Config = Schema.object({
   enabled: Schema.boolean().default(true).volatile(),
   mode: Schema.union([Schema.const("auto"), Schema.const("manual")]).default("auto").volatile().description("auto：主模型按提示规则自主咨询；manual：仅用户明确要求时咨询。"),
+  contextMode: Schema.union([Schema.const("inherited"), Schema.const("standalone")]).default("inherited").volatile().description("默认咨询模式：inherited 顾问自动继承完整对话；standalone 盲审，顾问只看问题与补充背景。可被工具的 mode 参数按次覆盖。"),
   advisorPrompt: Schema.string().default(DEFAULT_ADVISOR_PROMPT).volatile().description("顾问的系统提示词（整条链共用）。"),
   chain: Schema.array(ChainEntryConfig).default([]).volatile().description("顾问模型链，按顺序尝试；前面的失败（出错或超时无产出）时顺延到下一个。"),
   trigger: TriggerConfig.volatile(),
@@ -67,11 +68,18 @@ export type ChainEntry = {
 export type AdvisorConfig = {
   enabled: boolean;
   mode: "auto" | "manual";
+  /** Default consultation mode; overridable per call via the tool's mode param. */
+  contextMode: "inherited" | "standalone";
   advisorPrompt: string;
   chain: ChainEntry[];
   trigger: { repeatThreshold: number };
   limits: { defaultTimeoutMs: number; transcriptMaxChars: number; perEntryMaxChars: number };
 };
+
+/** Prepended to the advisor system prompt on standalone (blind) calls — the
+ *  confirmed wording also tells the advisor that the requester's stated views
+ *  are one-sided and may be overturned with reasons. */
+export const BLIND_REVIEW_MODIFIER = "这是一次盲审请求：你看不到主对话记录，只能依据主代理提出的问题与其主动补充的背景作答。主代理陈述的观点、倾向或已做的假设只是它单方面的判断，仅供参考，可以在有依据的前提下推翻，推翻时请说明理由。信息不足以给出可靠判断时，明确指出还缺少哪些信息，不要臆测补全。";
 
 /** Read through schemastery volatile observables so live settings edits apply
  *  without a plugin restart. Plain values pass through unchanged. */
@@ -93,6 +101,7 @@ export function normalizeConfig(raw: unknown): AdvisorConfig {
   return {
     enabled: cfg.enabled !== false,
     mode: cfg.mode === "manual" ? "manual" : "auto",
+    contextMode: cfg.contextMode === "standalone" ? "standalone" : "inherited",
     advisorPrompt: typeof cfg.advisorPrompt === "string" && cfg.advisorPrompt.trim() ? cfg.advisorPrompt : DEFAULT_ADVISOR_PROMPT,
     chain: Array.isArray(cfg.chain)
       ? cfg.chain.filter((e): e is ChainEntry => !!e && typeof e === "object" && typeof e.provider === "string" && e.provider.length > 0 && typeof e.model === "string" && e.model.length > 0)

@@ -1,7 +1,7 @@
 import { Config, normalizeConfig } from "./config";
 import { RepeatPressureTracker } from "./pressure";
 import { buildSectionText } from "./prompt";
-import { createAdvisorAskTool } from "./tool";
+import { createSecondOpinionTool } from "./tool";
 
 export { Config } from "./config";
 
@@ -33,7 +33,7 @@ export function apply(ctx: HostContext, _config: unknown) {
     pressure.handleEvent(session?.id ?? "", event as Parameters<typeof pressure.handleEvent>[1]);
   });
 
-  ctx.effect(() => ctx.tools.register(createAdvisorAskTool({ ctx: ctx as unknown as Parameters<typeof createAdvisorAskTool>[0]["ctx"], getConfig: liveConfig })), "dsh-second-opinion: second_opinion tool");
+  ctx.effect(() => ctx.tools.register(createSecondOpinionTool({ ctx: ctx as unknown as Parameters<typeof createSecondOpinionTool>[0]["ctx"], getConfig: liveConfig })), "dsh-second-opinion: second_opinion tool");
 
   const systemPrompt = ctx.systemPrompt ?? (typeof ctx.get === "function" ? (ctx.get("systemPrompt") as HostContext["systemPrompt"]) : undefined);
   if (systemPrompt) {

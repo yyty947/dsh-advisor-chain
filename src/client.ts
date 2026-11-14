@@ -53,6 +53,15 @@ moduleLoaderWindow.__ModuleLoader__!.load({
     // ---------- chat card event definition ----------
     interface ChainRow { label?: string; provider: string; model: string }
     interface AttemptRow { label: string; ok: boolean; error?: string }
+    interface MessageRow {
+      attemptIndex: number;
+      label: string;
+      model: string;
+      content: string;
+      thinking?: string;
+      truncated?: boolean;
+    }
+    interface FollowUpRow { text: string; answer?: string; truncated?: boolean }
     interface CardState {
       consultId: string;
       turn: number;
@@ -64,7 +73,10 @@ moduleLoaderWindow.__ModuleLoader__!.load({
       currentAttempt: number;
       liveContent: string;
       liveThinking: string;
-      message?: { label: string; model: string; content: string; thinking?: string; truncated?: boolean };
+      /** Advisor answers: one entry per successful attempt (dual → two). */
+      messages: MessageRow[];
+      /** Follow-up Q/A rounds (advisor/followup + its advisor/message). */
+      followUps: FollowUpRow[];
       attempts: AttemptRow[];
       truncated?: boolean;
     }
@@ -73,7 +85,9 @@ moduleLoaderWindow.__ModuleLoader__!.load({
       kind: "dsh-second-opinion",
       target: "chat",
       match(event: { type?: string; data?: { consultId?: string } }) {
-        if (event.type === "advisor/start" && event.data?.consultId) return { id: event.data.consultId, role: "start" };
+        if ((event.type === "advisor/start" || event.type === "advisor/followup") && event.data?.consultId) {
+          return { id: event.data.consultId, role: event.type === "advisor/start" ? "start" : "update" };
+        }
         if ((event.type === "advisor/delta" || event.type === "advisor/message" || event.type === "advisor/end") && event.data?.consultId) {
           return { id: event.data.consultId, role: "update" };
         }
@@ -92,6 +106,8 @@ moduleLoaderWindow.__ModuleLoader__!.load({
           currentAttempt: 0,
           liveContent: "",
           liveThinking: "",
+          messages: [],
+          followUps: [],
           attempts: [],
         } as CardState;
       },
@@ -100,6 +116,13 @@ moduleLoaderWindow.__ModuleLoader__!.load({
         const state = context.state;
         if (match.event.type === "advisor/delta") {
           const attemptIndex = (data.attemptIndex as number) ?? 0;
+          const round = typeof data.round === "number" ? data.round : 0;
+          if (round >= 1) {
+            // Live streaming into the follow-up being answered.
+            const followUps = state.followUps.map((f, i) =>
+              i === round - 1 ? { ...f, answer: (f.answer ?? "") + ((data.contentDelta as string) ?? "") } : f);
+            return { ...state, currentAttempt: attemptIndex, followUps };
+          }
           const reset = attemptIndex !== state.currentAttempt;
           return {
             ...state,
@@ -108,19 +131,31 @@ moduleLoaderWindow.__ModuleLoader__!.load({
             liveThinking: (reset ? "" : state.liveThinking) + ((data.thinkingDelta as string) ?? ""),
           };
         }
+        if (match.event.type === "advisor/followup") {
+          const round = (data.round as number) ?? state.followUps.length + 1;
+          const followUps = [...state.followUps];
+          followUps[round - 1] = { text: (data.followUp as string) ?? "" };
+          return { ...state, followUps, liveContent: "", liveThinking: "" };
+        }
         if (match.event.type === "advisor/message") {
-          return {
-            ...state,
-            message: {
-              label: (data.label as string) ?? "",
-              model: `${data.provider}/${data.model}`,
-              content: (data.content as string) ?? "",
-              thinking: data.thinking as string | undefined,
-              truncated: data.truncated === true,
-            },
-            liveContent: "",
-            liveThinking: "",
+          const round = typeof data.round === "number" ? data.round : 0;
+          if (round >= 1) {
+            const followUps = state.followUps.map((f, i) =>
+              i === round - 1 ? { ...f, answer: (data.content as string) ?? "", truncated: data.truncated === true || f.truncated } : f);
+            return { ...state, followUps, liveContent: "", liveThinking: "" };
+          }
+          const attemptIndex = (data.attemptIndex as number) ?? 0;
+          const row: MessageRow = {
+            attemptIndex,
+            label: (data.label as string) ?? "",
+            model: `${data.provider}/${data.model}`,
+            content: (data.content as string) ?? "",
+            thinking: data.thinking as string | undefined,
+            truncated: data.truncated === true,
           };
+          const messages = state.messages.filter((m) => m.attemptIndex !== attemptIndex);
+          messages.push(row);
+          return { ...state, messages, liveContent: "", liveThinking: "" };
         }
         if (match.event.type === "advisor/end") {
           return {
@@ -170,26 +205,41 @@ moduleLoaderWindow.__ModuleLoader__!.load({
       const data = props.node?.data;
       const [contextOpen, setContextOpen] = useState(false);
       if (!data) return null;
-      const message = data.message;
-      const content = message ? message.content : data.liveContent;
-      const thinking = message?.thinking || data.liveThinking;
       const failed = data.status === "failed";
       const running = data.status === "running";
+      const messages = data.messages ?? [];
+      const followUps = data.followUps ?? [];
       const statusBadge = failed ? badgeStyle("var(--dsw-alias-state-error-primary)") : running ? badgeStyle("var(--dsw-alias-state-warn-primary)") : badgeStyle("var(--dsw-alias-state-success-primary)");
       const statusText = failed ? "失败" : running ? "咨询中…" : "完成";
+      const lastAnswer = followUps.length > 0 ? followUps[followUps.length - 1] : undefined;
       return h("div", { style: cardStyle },
         h("div", null,
           h("span", { style: labelStyle }, "Second Opinion 咨询"),
           h("span", { style: statusBadge }, statusText),
-          message ? h("span", { style: badgeStyle("var(--dsw-alias-brand-primary)") }, message.model) : null,
+          messages.map((m) => h("span", { key: m.attemptIndex, style: badgeStyle("var(--dsw-alias-brand-primary)") }, m.model)),
           data.truncated ? h("span", { style: badgeStyle("var(--dsw-alias-state-warn-primary)") }, "已截断") : null),
         h("div", { style: { fontWeight: 600, margin: "6px 0 2px" } }, data.question),
         data.context ? h("div", null,
           h("button", { style: toggleStyle, type: "button", onClick: () => setContextOpen(!contextOpen) }, `${contextOpen ? "▾" : "▸"} 补充背景`),
           contextOpen ? h("div", { style: { whiteSpace: "pre-wrap", ...smallStyle, marginTop: 4 } }, data.context) : null) : null,
-        thinking && thinking.trim() ? h(Fold, { title: "顾问思考过程" }, thinking) : null,
-        content ? h("div", { style: { whiteSpace: "pre-wrap", marginTop: 6 } }, content, running ? "▍" : null) : null,
-        !content && running && !thinking ? h("div", { style: smallStyle }, `正在咨询 ${data.chain?.[data.currentAttempt]?.label ?? ""} …`) : null,
+        messages.length > 0 && messages.some((m) => m.thinking) ? h(Fold, { title: "顾问思考过程" }, messages.map((m) => m.thinking).filter(Boolean).join("\n\n")) : null,
+        !messages.length && data.liveThinking ? h(Fold, { title: "顾问思考过程" }, data.liveThinking) : null,
+        messages.length > 0
+          ? (messages.length > 1
+              ? h("div", { style: { display: "flex", gap: 12, flexWrap: "wrap", marginTop: 6 } },
+                  messages.map((m) => h("div", { key: m.attemptIndex, style: { flex: "1 1 240px", minWidth: 240, border: "1px solid var(--dsw-alias-border-l1)", borderRadius: 8, padding: "6px 8px" } },
+                    h("div", { style: { ...smallStyle, marginBottom: 4 } }, m.label || m.model),
+                    h("div", { style: { whiteSpace: "pre-wrap" } }, m.content))))
+              : h("div", { style: { whiteSpace: "pre-wrap", marginTop: 6 } }, messages[0].content))
+          : running
+            ? h("div", { style: { whiteSpace: "pre-wrap", marginTop: 6 } }, data.liveContent ? data.liveContent + "▍" : `正在咨询 ${data.chain?.[data.currentAttempt]?.label ?? ""} …`)
+            : null,
+        followUps.map((f, i) => h("div", { key: i, style: { marginTop: 10, paddingTop: 8, borderTop: "0.5px solid var(--dsw-alias-border-l1)" } },
+          h("div", { style: { fontWeight: 600, ...smallStyle } }, `追问 ${i + 1}：${f.text}`),
+          f.answer !== undefined
+            ? h("div", { style: { whiteSpace: "pre-wrap", marginTop: 4 } }, f.answer, running && i === followUps.length - 1 && !f.answer ? "▍" : null)
+            : h("div", { style: smallStyle }, "思考中…"))),
+        !messages.length && !followUps.length && running && !data.liveContent && !data.liveThinking ? h("div", { style: smallStyle }, `正在咨询 ${data.chain?.[data.currentAttempt]?.label ?? ""} …`) : null,
         data.attempts?.length ? h("div", { style: { marginTop: 8, ...smallStyle } },
           "尝试记录：",
           data.attempts.map((attempt, i) => h("span", { key: i },
@@ -213,6 +263,7 @@ moduleLoaderWindow.__ModuleLoader__!.load({
     interface DraftConfig {
       enabled: boolean;
       mode: "auto" | "manual";
+      contextMode: "inherited" | "standalone";
       advisorPrompt: string;
       chain: DraftChainEntry[];
       trigger: { repeatThreshold: number };
@@ -841,6 +892,17 @@ moduleLoaderWindow.__ModuleLoader__!.load({
                 { value: "manual", label: "manual（仅用户要求时）" },
               ],
               onChange: (e: { target: { value: string } }) => patch({ mode: e.target.value as DraftConfig["mode"] }),
+            })),
+          h(SRow, { title: "默认咨询模式", desc: "inherited：顾问自动继承完整对话；standalone：盲审——顾问只看问题与补充背景，独立判断。可在调用时按次覆盖。" },
+            h(Dropdown, {
+              value: draft.contextMode ?? "inherited",
+              width: 240,
+              ariaLabel: "默认咨询模式",
+              options: [
+                { value: "inherited", label: "inherited（继承完整对话）" },
+                { value: "standalone", label: "standalone（盲审）" },
+              ],
+              onChange: (e: { target: { value: string } }) => patch({ contextMode: e.target.value as DraftConfig["contextMode"] }),
             })),
           h("div", { style: SET.groupHead },
             h("div", null,

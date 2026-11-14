@@ -15,7 +15,7 @@ import { KNOWN_SESSION_EVENT_TYPES } from "@deepseek-ai/dsh-session";
  * would orphan the card events already persisted in existing sessions, and
  * the names are session-local vocabulary with no namespace collision.
  */
-export const ADVISOR_EVENT_TYPES = ["advisor/start", "advisor/delta", "advisor/message", "advisor/end"] as const;
+export const ADVISOR_EVENT_TYPES = ["advisor/start", "advisor/delta", "advisor/message", "advisor/end", "advisor/followup"] as const;
 
 export function ensureAdvisorEventTypes(): void {
   const known = KNOWN_SESSION_EVENT_TYPES as unknown as Set<string> | undefined;
@@ -63,6 +63,7 @@ export function appendAdvisorStart(
     consultId: string;
     question: string;
     context?: string;
+    mode?: "inherited" | "standalone";
     chain: Array<{ label?: string; provider: string; model: string }>;
   },
 ): void {
@@ -73,6 +74,7 @@ export function appendAdvisorStart(
     step,
     question: input.question,
     ...input.context === undefined ? {} : { context: input.context },
+    ...input.mode === undefined ? {} : { mode: input.mode },
     chain: input.chain.map((entry) => ({
       label: entry.label ?? `${entry.provider}/${entry.model}`,
       provider: entry.provider,
@@ -81,11 +83,35 @@ export function appendAdvisorStart(
   });
 }
 
+/** One durable follow-up question inside an existing consultation thread. */
+export function appendAdvisorFollowup(
+  log: SessionLogLike,
+  input: {
+    consultId: string;
+    round: number;
+    followUp: string;
+    provider: string;
+    model: string;
+  },
+): void {
+  const { turn, step } = latestTurnStep(log);
+  log.append?.("advisor/followup", {
+    consultId: input.consultId,
+    turn,
+    step,
+    round: input.round,
+    followUp: input.followUp,
+    provider: input.provider,
+    model: input.model,
+  });
+}
+
 export function appendAdvisorDelta(
   log: SessionLogLike,
   input: {
     consultId: string;
     attemptIndex: number;
+    round?: number;
     label: string;
     text?: string;
     thinking?: string;
@@ -98,6 +124,7 @@ export function appendAdvisorDelta(
     step,
     attemptIndex: input.attemptIndex,
     label: input.label,
+    ...input.round === undefined ? {} : { round: input.round },
     ...input.text ? { contentDelta: input.text } : {},
     ...input.thinking ? { thinkingDelta: input.thinking } : {},
   });
@@ -108,6 +135,7 @@ export function appendAdvisorMessage(
   input: {
     consultId: string;
     attemptIndex: number;
+    round?: number;
     label: string;
     provider: string;
     model: string;
@@ -126,6 +154,7 @@ export function appendAdvisorMessage(
     provider: input.provider,
     model: input.model,
     content: input.content,
+    ...input.round === undefined ? {} : { round: input.round },
     ...input.thinking ? { thinking: input.thinking } : {},
     ...input.truncated ? { truncated: true } : {},
   });

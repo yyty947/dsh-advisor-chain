@@ -503,7 +503,10 @@ moduleLoaderWindow.__ModuleLoader__!.load({
 
     // ---------- module ----------
     const name = "dsh-advisor-plugin";
-    const inject = ["uiConversation", "slots"];
+    // "remote" is the ClientRemote service (ctx.remote): the settings tab
+    // reads/writes plugin config and lists llm providers/models through it.
+    // Cordis refuses undeclared service access, so it must be declared here.
+    const inject = ["uiConversation", "slots", "remote"];
     let currentCtx: unknown = null;
 
     function apply(ctx: {

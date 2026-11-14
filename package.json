@@ -35,7 +35,7 @@
     "second-opinion",
     "fallback-chain"
   ],
-  "license": "Apache-2.0",
+  "license": "MIT",
   "engines": {
     "node": "^22.19.0 || >=24.0.0"
   },

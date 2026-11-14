@@ -284,6 +284,150 @@ moduleLoaderWindow.__ModuleLoader__!.load({
       { value: "max", label: "max" },
     ];
 
+    // ---------- settings styles ----------
+    // Native settings row pattern copied from the shipped 通用设置 page
+    // (ui-settings-general DeveloperToolsRow): flat rows, title 14px left,
+    // description 12px secondary below it, control right, 16px padding,
+    // 0.5px token separators. Theme tokens only — no literal colors.
+    const SET = {
+      root: {
+        width: "100%",
+        color: "var(--dsw-alias-label-primary)",
+        fontFamily: "var(--dsw-font-family, inherit)",
+      } as React.CSSProperties,
+      row: {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 24,
+        padding: "16px 0",
+        borderBottom: "0.5px solid var(--dsw-alias-border-l2)",
+      } as React.CSSProperties,
+      title: { fontSize: 14, lineHeight: "20px" } as React.CSSProperties,
+      desc: {
+        marginTop: 4,
+        color: "var(--dsw-alias-label-secondary)",
+        fontSize: 12,
+        lineHeight: "18px",
+      } as React.CSSProperties,
+      groupHead: {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 24,
+        padding: "16px 0 8px",
+      } as React.CSSProperties,
+      control: {
+        height: 32,
+        borderRadius: 8,
+        border: "1px solid var(--dsw-alias-border-l2)",
+        background: "var(--dsw-alias-bg-base)",
+        color: "var(--dsw-alias-label-primary)",
+        fontSize: 13,
+        padding: "0 10px",
+      } as React.CSSProperties,
+      textarea: {
+        width: "100%",
+        minHeight: 120,
+        marginTop: 8,
+        borderRadius: 8,
+        border: "1px solid var(--dsw-alias-border-l2)",
+        background: "var(--dsw-alias-bg-base)",
+        color: "var(--dsw-alias-label-primary)",
+        fontSize: 13,
+        lineHeight: 1.6,
+        padding: "8px 10px",
+        resize: "vertical",
+        fontFamily: "inherit",
+      } as React.CSSProperties,
+      entry: {
+        border: "1px solid var(--dsw-alias-border-l1)",
+        borderRadius: 10,
+        padding: 12,
+        marginBottom: 12,
+      } as React.CSSProperties,
+      btn: {
+        height: 28,
+        padding: "0 12px",
+        borderRadius: 8,
+        border: "1px solid var(--dsw-alias-border-l2)",
+        background: "transparent",
+        color: "var(--dsw-alias-label-primary)",
+        fontSize: 12.5,
+        cursor: "pointer",
+      } as React.CSSProperties,
+      btnPrimary: {
+        height: 32,
+        padding: "0 18px",
+        borderRadius: 8,
+        border: "1px solid transparent",
+        background: "var(--dsw-alias-brand-primary)",
+        color: "var(--dsw-alias-bg-base)",
+        fontSize: 13,
+        cursor: "pointer",
+      } as React.CSSProperties,
+      msgOk: { fontSize: 12, color: "var(--dsw-alias-state-success-primary)" } as React.CSSProperties,
+      msgErr: { fontSize: 12, color: "var(--dsw-alias-state-error-primary)" } as React.CSSProperties,
+      fieldLabel: {
+        display: "block",
+        marginBottom: 4,
+        color: "var(--dsw-alias-label-secondary)",
+        fontSize: 12,
+        lineHeight: "18px",
+      } as React.CSSProperties,
+    };
+
+    /** Native-style pill switch (role="switch" + aria-checked kept; the
+     *  visual mirrors the shipped settings toggle with token colors). */
+    function Toggle({ checked, onChange, label, disabled }: { checked: boolean; onChange: (next: boolean) => void; label: string; disabled?: boolean }) {
+      return h("button", {
+        role: "switch",
+        "aria-checked": checked,
+        "aria-label": label,
+        type: "button",
+        disabled,
+        onClick: () => onChange(!checked),
+        style: {
+          position: "relative",
+          width: 40,
+          height: 22,
+          borderRadius: 999,
+          border: "none",
+          padding: 0,
+          cursor: disabled ? "default" : "pointer",
+          background: checked ? "var(--dsw-alias-label-primary)" : "var(--dsw-alias-border-l2)",
+          transition: "background 160ms ease",
+        },
+      }, h("span", {
+        style: {
+          position: "absolute",
+          top: 2,
+          left: checked ? 20 : 2,
+          width: 18,
+          height: 18,
+          borderRadius: "50%",
+          background: "var(--dsw-alias-bg-base)",
+          transition: "left 160ms ease",
+        },
+      }));
+    }
+
+    /** One native-style settings row: title + description left, control right. */
+    function SRow({ title, desc, last, children }: { title: string; desc?: string; last?: boolean; children?: React.ReactNode }) {
+      return h("div", { style: { ...SET.row, ...(last ? { borderBottom: "none" } : null) } },
+        h("div", null,
+          h("div", { style: SET.title }, title),
+          desc ? h("div", { style: SET.desc }, desc) : null),
+        children ?? null);
+    }
+
+    /** Labeled field: 12px secondary label above one control. */
+    function Field({ label, children }: { label: string; children?: React.ReactNode }) {
+      return h("div", { style: { display: "flex", flexDirection: "column", gap: 4, minWidth: 0 } },
+        h("span", { style: SET.fieldLabel }, label),
+        children);
+    }
+
     function AdvisorSettingsTab() {
       const [draft, setDraft] = useState<DraftConfig | null>(null);
       const [revision, setRevision] = useState(0);
@@ -453,129 +597,112 @@ moduleLoaderWindow.__ModuleLoader__!.load({
       };
 
       if (!draft) {
-        return h("li", { className: "dsh-advisor-plugin-settings", style: cardStyle },
-          error || "加载配置中…");
+        return h("li", { className: "dsh-advisor-plugin-settings", style: { ...SET.root, listStyle: "none", padding: 0, margin: 0 } },
+          h("div", { style: SET.desc }, error || "加载配置中…"));
       }
 
-      return h("li", { className: "dsh-advisor-plugin-settings", style: cardStyle },
-        h("div", { style: { display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" } },
-          h("span", { style: labelStyle, fontSize: 14 }, "Advisor 顾问"),
-          h("button", {
-            role: "switch",
-            "aria-checked": draft.enabled,
-            style: { ...buttonStyle, color: draft.enabled ? "#16a34a" : "inherit" },
-            type: "button",
-            onClick: () => patch({ enabled: !draft.enabled }),
-          }, draft.enabled ? "已启用" : "已停用"),
-          h("label", { style: smallStyle }, "触发模式：",
-            h("select", {
-              style: { ...inputStyle, width: "auto" },
-              value: draft.mode,
-              onChange: (e: React.ChangeEvent<HTMLSelectElement>) => patch({ mode: e.target.value as DraftConfig["mode"] }),
-            },
-              h("option", { value: "auto" }, "auto（主模型自主判断）"),
-              h("option", { value: "manual" }, "manual（仅用户要求时）"))),
-          h("span", { style: { flex: 1 } }),
-          h("button", { style: buttonStyle, type: "button", disabled: saving, onClick: save }, saving ? "保存中…" : "保存")),
-        msg ? h("div", { style: { ...smallStyle, color: "#16a34a", marginTop: 6 } }, msg) : null,
-        error ? h("div", { style: { ...smallStyle, color: "#dc2626", marginTop: 6 } }, error) : null,
-        h("div", { style: { marginTop: 10 } },
-          h("div", { style: labelStyle }, "顾问模型链（按顺序尝试，失败自动顺延）"),
-          draft.chain.map((entry, index) =>
-            h("div", { key: index, style: { border: "1px dashed var(--dsw-alias-color-border, rgba(127,127,127,.35))", borderRadius: 8, padding: 8, margin: "6px 0" } },
-              h("div", { style: { display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" } },
-                h("span", { style: smallStyle }, `#${index + 1}`),
-                h("input", {
-                  style: { ...inputStyle, width: 120 },
-                  placeholder: "显示名（可选）",
-                  value: entry.label ?? "",
-                  onChange: (e: React.ChangeEvent<HTMLInputElement>) => patchEntry(index, { label: e.target.value }),
-                }),
-                h("select", {
-                  style: { ...inputStyle, width: "auto" },
-                  value: entry.provider,
-                  onChange: (e: React.ChangeEvent<HTMLSelectElement>) => patchEntry(index, { provider: e.target.value }),
-                }, providers.length > 0
-                  ? providers.map((p) => h("option", { key: p.id, value: p.id }, p.name || p.id))
-                  : h("option", { value: entry.provider }, entry.provider)),
-                h("input", {
-                  style: { ...inputStyle, width: 200 },
-                  list: `dsh-advisor-models-${entry.provider || index}`,
-                  placeholder: "模型 id",
-                  value: entry.model,
-                  onChange: (e: React.ChangeEvent<HTMLInputElement>) => patchEntry(index, { model: e.target.value }),
-                }),
-                (modelOptions[entry.provider] ?? []).length > 0
-                  ? h("datalist", { id: `dsh-advisor-models-${entry.provider || index}` },
-                      modelOptions[entry.provider].map((id) => h("option", { key: id, value: id })))
-                  : null,
-                h("button", {
-                  style: buttonStyle, type: "button",
-                  disabled: fetchingProvider === entry.provider || !entry.provider,
-                  onClick: () => fetchModels(entry.provider),
-                }, fetchingProvider === entry.provider ? "获取中…" : "获取模型列表"),
-                h("span", { style: { flex: 1 } }),
-                h("button", { style: buttonStyle, type: "button", onClick: () => moveEntry(index, -1), disabled: index === 0 }, "↑"),
-                h("button", { style: buttonStyle, type: "button", onClick: () => moveEntry(index, 1), disabled: index === draft.chain.length - 1 }, "↓"),
-                h("button", { style: buttonStyle, type: "button", onClick: () => removeEntry(index) }, "删除")),
-              h("div", { style: { display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center", marginTop: 6 } },
-                h("label", { style: smallStyle }, "推理档位：",
-                  h("select", {
-                    style: { ...inputStyle, width: "auto" },
-                    value: entry.reasoningEffort ?? "",
-                    onChange: (e: React.ChangeEvent<HTMLSelectElement>) => patchEntry(index, { reasoningEffort: e.target.value || undefined }),
-                  }, EFFORTS.map((effort) => h("option", { key: effort.value, value: effort.value }, effort.label)))),
-                h("label", { style: smallStyle }, "温度：",
-                  h("input", {
-                    style: { ...inputStyle, width: 70 }, type: "number", min: 0, max: 2, step: 0.1,
-                    value: entry.temperature ?? "",
-                    onChange: (e: React.ChangeEvent<HTMLInputElement>) => patchEntry(index, { temperature: e.target.value === "" ? undefined : Number(e.target.value) }),
-                  })),
-                h("label", { style: smallStyle }, "maxTokens：",
-                  h("input", {
-                    style: { ...inputStyle, width: 90 }, type: "number", min: 1,
-                    value: entry.maxTokens ?? "",
-                    onChange: (e: React.ChangeEvent<HTMLInputElement>) => patchEntry(index, { maxTokens: e.target.value === "" ? undefined : Number(e.target.value) }),
-                  })),
-                h("label", { style: smallStyle }, "超时ms：",
-                  h("input", {
-                    style: { ...inputStyle, width: 90 }, type: "number", min: 1000, max: 600000, step: 500,
-                    value: entry.timeoutMs ?? "",
-                    onChange: (e: React.ChangeEvent<HTMLInputElement>) => patchEntry(index, { timeoutMs: e.target.value === "" ? undefined : Number(e.target.value) }),
-                  }))))),
-          h("button", { style: buttonStyle, type: "button", onClick: addEntry }, "＋ 添加顾问模型")),
-        h("div", { style: { marginTop: 10 } },
-          h("div", { style: labelStyle }, "顾问系统提示词（整条链共用）"),
+      const numRow = (title: string, desc: string, value: number, min: number, max: number, step: number, onChange: (v: number) => void, last = false) =>
+        h("div", { style: { ...SET.row, ...(last ? { borderBottom: "none" } : null) } },
+          h("div", null, h("div", { style: SET.title }, title), h("div", { style: SET.desc }, desc)),
+          h("input", {
+            style: { ...SET.control, width: 110 }, type: "number", min, max, step, value,
+            onChange: (e: React.ChangeEvent<HTMLInputElement>) => onChange(Number(e.target.value)),
+          }));
+
+      const entryNode = (index: number, entry: DraftChainEntry) =>
+        h("div", { key: index, style: SET.entry },
+          h("div", { style: { display: "flex", alignItems: "center", gap: 8, marginBottom: 10 } },
+            h("span", { style: { ...SET.desc, marginTop: 0, width: 22 } }, `#${index + 1}`),
+            h("span", { style: { flex: 1 } }),
+            h("button", {
+              style: SET.btn, type: "button",
+              disabled: fetchingProvider === entry.provider || !entry.provider,
+              onClick: () => fetchModels(entry.provider),
+            }, fetchingProvider === entry.provider ? "获取中…" : "获取模型列表"),
+            h("button", { style: SET.btn, type: "button", "aria-label": "上移", onClick: () => moveEntry(index, -1), disabled: index === 0 }, "↑"),
+            h("button", { style: SET.btn, type: "button", "aria-label": "下移", onClick: () => moveEntry(index, 1), disabled: index === draft.chain.length - 1 }, "↓"),
+            h("button", { style: SET.btn, type: "button", onClick: () => removeEntry(index) }, "删除")),
+          h("div", { style: { display: "flex", gap: 12, flexWrap: "wrap" } },
+            h(Field, { label: "显示名（可选）" }, h("input", {
+              style: { ...SET.control, width: 150 },
+              placeholder: "如：架构顾问",
+              value: entry.label ?? "",
+              onChange: (e: React.ChangeEvent<HTMLInputElement>) => patchEntry(index, { label: e.target.value }),
+            })),
+            h(Field, { label: "Provider" }, h("select", {
+              style: { ...SET.control, width: 180 },
+              value: entry.provider,
+              onChange: (e: React.ChangeEvent<HTMLSelectElement>) => patchEntry(index, { provider: e.target.value }),
+            }, providers.length > 0
+              ? providers.map((p) => h("option", { key: p.id, value: p.id }, p.name || p.id))
+              : h("option", { value: entry.provider }, entry.provider))),
+            h(Field, { label: "模型 id" }, h("input", {
+              style: { ...SET.control, width: "100%", boxSizing: "border-box" },
+              list: `dsh-advisor-models-${entry.provider || index}`,
+              placeholder: "模型 id",
+              value: entry.model,
+              onChange: (e: React.ChangeEvent<HTMLInputElement>) => patchEntry(index, { model: e.target.value }),
+            })),
+            (modelOptions[entry.provider] ?? []).length > 0
+              ? h("datalist", { id: `dsh-advisor-models-${entry.provider || index}` },
+                  modelOptions[entry.provider].map((id) => h("option", { key: id, value: id })))
+              : null),
+          h("div", { style: { display: "flex", gap: 12, flexWrap: "wrap", marginTop: 10 } },
+            h(Field, { label: "推理档位" }, h("select", {
+              style: { ...SET.control, width: 160 },
+              value: entry.reasoningEffort ?? "",
+              onChange: (e: React.ChangeEvent<HTMLSelectElement>) => patchEntry(index, { reasoningEffort: e.target.value || undefined }),
+            }, EFFORTS.map((effort) => h("option", { key: effort.value, value: effort.value }, effort.label)))),
+            h(Field, { label: "温度（0–2）" }, h("input", {
+              style: { ...SET.control, width: 110 }, type: "number", min: 0, max: 2, step: 0.1,
+              value: entry.temperature ?? "",
+              onChange: (e: React.ChangeEvent<HTMLInputElement>) => patchEntry(index, { temperature: e.target.value === "" ? undefined : Number(e.target.value) }),
+            })),
+            h(Field, { label: "maxTokens" }, h("input", {
+              style: { ...SET.control, width: 120 }, type: "number", min: 1,
+              value: entry.maxTokens ?? "",
+              onChange: (e: React.ChangeEvent<HTMLInputElement>) => patchEntry(index, { maxTokens: e.target.value === "" ? undefined : Number(e.target.value) }),
+            })),
+            h(Field, { label: "超时（毫秒）" }, h("input", {
+              style: { ...SET.control, width: 130 }, type: "number", min: 1000, max: 600000, step: 500,
+              value: entry.timeoutMs ?? "",
+              onChange: (e: React.ChangeEvent<HTMLInputElement>) => patchEntry(index, { timeoutMs: e.target.value === "" ? undefined : Number(e.target.value) }),
+            }))));
+
+      return h("li", { className: "dsh-advisor-plugin-settings", style: { ...SET.root, listStyle: "none", padding: 0, margin: 0 } },
+        h(SRow, { title: "启用 Advisor 顾问", desc: "停用后 advisor_ask 不可用，也不再注入使用边界提示。" },
+          h(Toggle, { checked: draft.enabled, label: "启用 Advisor 顾问", onChange: (next: boolean) => patch({ enabled: next }) })),
+        h(SRow, { title: "触发模式", desc: "auto：主模型按调用判据自主咨询；manual：仅用户明确要求时咨询。" },
+          h("select", {
+            style: { ...SET.control, width: 220 },
+            value: draft.mode,
+            onChange: (e: React.ChangeEvent<HTMLSelectElement>) => patch({ mode: e.target.value as DraftConfig["mode"] }),
+          },
+            h("option", { value: "auto" }, "auto（主模型自主判断）"),
+            h("option", { value: "manual" }, "manual（仅用户要求时）"))),
+        h("div", { style: SET.groupHead },
+          h("div", null,
+            h("div", { style: SET.title }, "顾问模型链"),
+            h("div", { style: SET.desc }, "按顺序尝试；某项失败（出错或超时无产出）自动顺延下一个。")),
+          h("button", { style: SET.btn, type: "button", onClick: addEntry }, "＋ 添加顾问模型")),
+        ...draft.chain.map((entry, index) => entryNode(index, entry)),
+        draft.chain.length === 0 ? h("div", { style: { ...SET.desc, padding: "0 0 12px" } }, "尚未配置顾问模型——配置后 advisor_ask 才可用。") : null,
+        h("div", { style: { padding: "16px 0", borderBottom: "0.5px solid var(--dsw-alias-border-l2)" } },
+          h("div", { style: SET.title }, "顾问系统提示词"),
+          h("div", { style: SET.desc }, "整条链共用；清空并保存可回落到插件默认。"),
           h("textarea", {
-            style: { ...inputStyle, minHeight: 110, fontFamily: "inherit" },
+            style: SET.textarea,
             value: draft.advisorPrompt,
             onChange: (e: React.ChangeEvent<HTMLTextAreaElement>) => patch({ advisorPrompt: e.target.value }),
           })),
-        h("div", { style: { display: "flex", gap: 14, flexWrap: "wrap", marginTop: 10, ...smallStyle } },
-          h("label", null, "重复提问强制咨询阈值：",
-            h("input", {
-              style: { ...inputStyle, width: 60 }, type: "number", min: 2, max: 10,
-              value: draft.trigger?.repeatThreshold ?? 3,
-              onChange: (e: React.ChangeEvent<HTMLInputElement>) => patch({ trigger: { repeatThreshold: Number(e.target.value) || 3 } }),
-            }), " 次"),
-          h("label", null, "抄本字符预算：",
-            h("input", {
-              style: { ...inputStyle, width: 80 }, type: "number", min: 2000, max: 400000, step: 1000,
-              value: draft.limits?.transcriptMaxChars ?? 60000,
-              onChange: (e: React.ChangeEvent<HTMLInputElement>) => patch({ limits: { ...draft.limits, transcriptMaxChars: Number(e.target.value) || 60000 } }),
-            })),
-          h("label", null, "单条消息上限：",
-            h("input", {
-              style: { ...inputStyle, width: 80 }, type: "number", min: 200, max: 20000, step: 100,
-              value: draft.limits?.perEntryMaxChars ?? 2000,
-              onChange: (e: React.ChangeEvent<HTMLInputElement>) => patch({ limits: { ...draft.limits, perEntryMaxChars: Number(e.target.value) || 2000 } }),
-            })),
-          h("label", null, "默认超时ms：",
-            h("input", {
-              style: { ...inputStyle, width: 90 }, type: "number", min: 1000, max: 600000, step: 500,
-              value: draft.limits?.defaultTimeoutMs ?? 120000,
-              onChange: (e: React.ChangeEvent<HTMLInputElement>) => patch({ limits: { ...draft.limits, defaultTimeoutMs: Number(e.target.value) || 120000 } }),
-            }))));
+        numRow("重复提问强制咨询阈值", "同一用户问题重复达到该次数时，提示升级为强制咨询（单位：次）。", draft.trigger?.repeatThreshold ?? 3, 2, 10, 1, (v) => patch({ trigger: { repeatThreshold: Math.min(10, Math.max(2, v || 3)) } })),
+        numRow("抄本字符预算", "发送给顾问的对话抄本总字符上限；超出时保留最新部分并标注省略。", draft.limits?.transcriptMaxChars ?? 60000, 2000, 400000, 1000, (v) => patch({ limits: { ...draft.limits, transcriptMaxChars: v || 60000 } })),
+        numRow("单条消息上限", "抄本中单条消息（含工具结果）的最大字符数。", draft.limits?.perEntryMaxChars ?? 2000, 200, 20000, 100, (v) => patch({ limits: { ...draft.limits, perEntryMaxChars: v || 2000 } })),
+        numRow("默认超时（毫秒）", "链上条目未单独配置超时时的单次调用上限。", draft.limits?.defaultTimeoutMs ?? 120000, 1000, 600000, 500, (v) => patch({ limits: { ...draft.limits, defaultTimeoutMs: v || 120000 } }), true),
+        h("div", { style: { display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 12, padding: "16px 0 4px" } },
+          msg ? h("span", { style: SET.msgOk }, msg) : null,
+          error ? h("span", { style: SET.msgErr }, error) : null,
+          h("button", { style: SET.btnPrimary, type: "button", disabled: saving, onClick: save }, saving ? "保存中…" : "保存")));
     }
 
     // ---------- module ----------

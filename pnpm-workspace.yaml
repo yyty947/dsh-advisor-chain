@@ -1,0 +1,3 @@
+# pnpm 10+ reads build-script policy and other pnpm settings from this file.
+onlyBuiltDependencies:
+  - esbuild

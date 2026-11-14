@@ -2,3 +2,5 @@ node_modules/
 *.tsbuildinfo
 .vitest/
 .DS_Store
+# packed install artifacts (profile installs reference the tgz by path; keep it local)
+*.tgz

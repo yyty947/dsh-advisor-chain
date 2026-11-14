@@ -21,7 +21,10 @@ jobs:
           cache: pnpm
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        # esbuild/rolldown ship their platform binaries as optionalDependencies,
+        # so skipping postinstall scripts is safe here and avoids pnpm's
+        # interactive build-approval gate in CI.
+        run: pnpm install --frozen-lockfile --ignore-scripts
 
       - name: Typecheck
         run: pnpm typecheck

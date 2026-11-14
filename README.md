@@ -10,9 +10,27 @@ DeepSeek Harness（DSH）插件：让主模型在需要时——自动判断或�
 - **降级链**：顾问模型按顺序尝试，失败（出错或超时无产出）自动顺延；超时但有部分产出按「已截断」显式标记。
 - **触发**：auto（系统提示软规则 + 同一问题重复 N 次的硬触发）/ manual（仅用户明确要求）。
 - **会话卡片**：咨询过程（问题、思考、回答、尝试记录）以会话事件留痕，UI 渲染成卡片，可回放。
-- **原生设置页**：设置 → 插件 → Second Opinion（第二意见）；模型链编辑、provider/模型下拉、推理档位；保存即时生效。
+- **原生设置页**：模型链编辑、provider/模型下拉（可拉取模型列表）、推理档位；保存即时生效。
 
-设计文档与决策记录见 [HANDOVER-DSH-ADVISOR.md](HANDOVER-DSH-ADVISOR.md)。
+设置入口：**设置 → Second Opinion**。设计文档与决策记录见 [HANDOVER-DSH-ADVISOR.md](HANDOVER-DSH-ADVISOR.md)。
+
+## 安装
+
+**npm 包（推荐——预构建安装免构建授权）**
+
+```bash
+dsh plugin --profile desktop add dsh-second-opinion
+```
+
+**GitHub 直装（从源码构建）**
+
+```bash
+dsh plugin --profile desktop add github:yyty947/dsh-second-opinion
+```
+
+首次从源码安装会请求授权一次 esbuild 构建脚本（allowBuilds），确认即可。安装后重启 DSH 生效。
+
+本地开发安装：设置 → 插件 → 添加插件，选择本目录（目录链接安装，改代码后 `pnpm build` + 重载生效）。
 
 ## 开发
 
@@ -22,8 +40,6 @@ pnpm build        # tsdown → lib/index.mjs + lib/client.js
 pnpm test         # vitest
 pnpm typecheck
 ```
-
-安装到 DSH：设置 → 插件 → 添加插件，选择本目录（本地目录链接安装，改代码后 `pnpm build` + 重载生效）；或把本目录加入 plugin market 索引后安装。`lib/` 构建产物随仓库提交，方便直接链接安装。
 
 ## License
 
@@ -36,3 +52,11 @@ MIT
 A DeepSeek Harness (DSH) plugin: the main model asks a configured **advisor model chain** for a second opinion whenever needed — auto-judged or user-triggered.
 
 Highlights: automatic full-conversation context inheritance via `deriveMessages()` (the advisor sees what the main model sees; no manual background hand-off); an ordered fallback chain with per-entry timeout and explicit truncation marking; auto/manual trigger modes with a repeated-question hard trigger; durable consultation cards in the chat stream; and a native settings page with model-chain editing. See [HANDOVER-DSH-ADVISOR.md](HANDOVER-DSH-ADVISOR.md) for the design history.
+
+## Install
+
+```bash
+dsh plugin --profile desktop add dsh-second-opinion
+# or, building from source:
+dsh plugin --profile desktop add github:yyty947/dsh-second-opinion
+```

@@ -1,4 +1,4 @@
-// Client half of dsh-second-opinion: chat card + settings tab.
+// Client half of dsh-advisor-chain: chat card + settings tab.
 //
 // The web ModuleLoader evaluates this bundle and passes a `require` shim that
 // resolves shared client modules (react) from the browser module table, so
@@ -12,7 +12,7 @@ interface ModuleLoaderGlobal {
 const moduleLoaderWindow = window as unknown as ModuleLoaderGlobal;
 
 moduleLoaderWindow.__ModuleLoader__!.load({
-  id: "dsh-second-opinion",
+  id: "dsh-advisor-chain",
   factory(require) {
     const React = require("react") as typeof import("react");
     const h = React.createElement;
@@ -82,7 +82,7 @@ moduleLoaderWindow.__ModuleLoader__!.load({
     }
 
     const advisorCardDefinition = {
-      kind: "dsh-second-opinion",
+      kind: "dsh-advisor-chain",
       target: "chat",
       match(event: { type?: string; data?: { consultId?: string } }) {
         if ((event.type === "advisor/start" || event.type === "advisor/followup") && event.data?.consultId) {
@@ -182,7 +182,7 @@ moduleLoaderWindow.__ModuleLoader__!.load({
         if (context.state === undefined) return null;
         return {
           key: context.key,
-          kind: "dsh-second-opinion",
+          kind: "dsh-advisor-chain",
           id: context.id,
           target: "chat",
           anchorSeq: context.start?.event?.seq ?? context.matches?.[0]?.event?.seq ?? 0,
@@ -308,7 +308,7 @@ moduleLoaderWindow.__ModuleLoader__!.load({
       return candidate.remote ?? (typeof candidate.get === "function" ? (candidate.get("remote") as RemoteLike) : undefined);
     }
 
-    const NS = "dsh-second-opinion";
+    const NS = "dsh-advisor-chain";
     const EFFORTS: Array<{ value: string; label: string }> = [
       { value: "", label: "默认（不指定）" },
       { value: "off", label: "off（关闭思考）" },
@@ -812,7 +812,7 @@ moduleLoaderWindow.__ModuleLoader__!.load({
       };
 
       if (!draft) {
-        return h("li", { className: "dsh-second-opinion-settings", style: { ...SET.root, listStyle: "none", padding: 0, margin: 0 } },
+        return h("li", { className: "dsh-advisor-chain-settings", style: { ...SET.root, listStyle: "none", padding: 0, margin: 0 } },
           h("div", { style: SET.row },
             h("div", { style: error ? SET.msgErr : SET.desc }, error || "加载配置中…"),
             error ? h("button", { style: SET.btn, type: "button", onClick: () => reload() }, "重试") : null));
@@ -919,7 +919,7 @@ moduleLoaderWindow.__ModuleLoader__!.load({
               onChange: (e: React.ChangeEvent<HTMLInputElement>) => patchEntry(index, { timeoutMs: e.target.value === "" ? undefined : Number(e.target.value) }),
             }))));
 
-      return h("li", { className: "dsh-second-opinion-settings", style: { ...SET.root, listStyle: "none", padding: 0, margin: 0 } },
+      return h("li", { className: "dsh-advisor-chain-settings", style: { ...SET.root, listStyle: "none", padding: 0, margin: 0 } },
         // Saving locks every control below (M3): responses never race edits.
         h("div", { style: { pointerEvents: saving ? "none" : "auto", opacity: saving ? 0.6 : 1 } },
           h(SRow, { title: "启用 Second Opinion", desc: "停用后 second_opinion 不可用，也不再注入使用边界提示。" },
@@ -991,7 +991,7 @@ moduleLoaderWindow.__ModuleLoader__!.load({
     }
 
     // ---------- module ----------
-    const name = "dsh-second-opinion";
+    const name = "dsh-advisor-chain";
     // Cordis requires every accessed service AND each remote.<namespace>
     // child service declared in inject (same pattern as the official
     // ui-settings client: ['remote', 'remote.settings']). We use the
@@ -1010,9 +1010,9 @@ moduleLoaderWindow.__ModuleLoader__!.load({
       currentCtx = ctx;
       if (ctx.uiConversation?.events?.register) ctx.uiConversation.events.register(advisorCardDefinition);
       ctx.slots.inject("conversation.chat.node", () =>
-        ctx.slots.register({ name: "conversation.chat.node", key: "dsh-second-opinion", locale: "chat" }, AdvisorCardView as (props: unknown) => React.ReactElement));
+        ctx.slots.register({ name: "conversation.chat.node", key: "dsh-advisor-chain", locale: "chat" }, AdvisorCardView as (props: unknown) => React.ReactElement));
       ctx.slots.inject("settings.section", () =>
-        ctx.slots.register({ name: "settings.section", id: "dsh-second-opinion", order: 0, label: "Second Opinion" }, AdvisorSettingsTab as unknown as (props: unknown) => React.ReactElement));
+        ctx.slots.register({ name: "settings.section", id: "dsh-advisor-chain", order: 0, label: "Second Opinion" }, AdvisorSettingsTab as unknown as (props: unknown) => React.ReactElement));
     }
 
     return { name, inject, apply };

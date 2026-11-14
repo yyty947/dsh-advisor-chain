@@ -11,7 +11,7 @@ import { KNOWN_SESSION_EVENT_TYPES } from "@deepseek-ai/dsh-session";
  * registration surface.
  *
  * Note: the event type names (advisor/*) deliberately predate the package
- * rename to dsh-second-opinion and are kept — renaming stored event types
+ * rename to dsh-advisor-chain and are kept — renaming stored event types
  * would orphan the card events already persisted in existing sessions, and
  * the names are session-local vocabulary with no namespace collision.
  */
@@ -20,7 +20,7 @@ export const ADVISOR_EVENT_TYPES = ["advisor/start", "advisor/delta", "advisor/m
 export function ensureAdvisorEventTypes(): void {
   const known = KNOWN_SESSION_EVENT_TYPES as unknown as Set<string> | undefined;
   if (!known || typeof known !== "object" || typeof known.add !== "function" || Object.isFrozen(known)) {
-    throw new Error("dsh-second-opinion: KNOWN_SESSION_EVENT_TYPES is not mutable. The plugin cannot register durable advisor events; please update it when DSH provides an official plugin-event registration API.");
+    throw new Error("dsh-advisor-chain: KNOWN_SESSION_EVENT_TYPES is not mutable. The plugin cannot register durable advisor events; please update it when DSH provides an official plugin-event registration API.");
   }
   for (const type of ADVISOR_EVENT_TYPES) known.add(type);
 }

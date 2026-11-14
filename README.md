@@ -1,4 +1,4 @@
-# dsh-second-opinion
+# dsh-advisor-chain
 
 [English intro below](#english)
 
@@ -22,13 +22,13 @@ DeepSeek Harness（DSH）插件：让主模型在需要时——自动判断或�
 **npm 包（推荐——预构建安装免构建授权）**
 
 ```bash
-dsh plugin --profile desktop add dsh-second-opinion
+dsh plugin --profile desktop add dsh-advisor-chain
 ```
 
 **GitHub 直装（从源码构建）**
 
 ```bash
-dsh plugin --profile desktop add github:yyty947/dsh-second-opinion
+dsh plugin --profile desktop add github:yyty947/dsh-advisor-chain
 ```
 
 首次从源码安装会请求授权一次 esbuild 构建脚本（allowBuilds），确认即可。安装后重启 DSH 生效。
@@ -59,7 +59,7 @@ Highlights: automatic full-conversation context inheritance via `deriveMessages(
 ## Install
 
 ```bash
-dsh plugin --profile desktop add dsh-second-opinion
+dsh plugin --profile desktop add dsh-advisor-chain
 # or, building from source:
-dsh plugin --profile desktop add github:yyty947/dsh-second-opinion
+dsh plugin --profile desktop add github:yyty947/dsh-advisor-chain
 ```

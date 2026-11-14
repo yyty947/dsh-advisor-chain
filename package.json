@@ -1,11 +1,11 @@
 {
-  "name": "dsh-second-opinion",
-  "version": "0.3.3",
+  "name": "dsh-advisor-chain",
+  "version": "0.3.4",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/yyty947/dsh-second-opinion.git"
+    "url": "git+https://github.com/yyty947/dsh-advisor-chain.git"
   },
-  "homepage": "https://github.com/yyty947/dsh-second-opinion#readme",
+  "homepage": "https://github.com/yyty947/dsh-advisor-chain#readme",
   "description": "DeepSeek Harness 插件：主模型在需要时（自动判断或用户手动触发）向配置好的顾问模型链征求第二意见。顾问通过 deriveMessages() 自动继承当前会话的完整对话上下文，调用失败时按链顺延到下一个模型。",
   "private": false,
   "type": "module",
@@ -36,6 +36,7 @@
     "dsh",
     "dsh-plugin",
     "deepseek-harness",
+    "advisor-chain",
     "second-opinion",
     "advisor",
     "fallback-chain"

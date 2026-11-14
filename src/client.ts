@@ -287,6 +287,7 @@ moduleLoaderWindow.__ModuleLoader__!.load({
     function AdvisorSettingsTab() {
       const [draft, setDraft] = useState<DraftConfig | null>(null);
       const [revision, setRevision] = useState(0);
+      const [allNamespaces, setAllNamespaces] = useState<Array<{ ns: string; value: unknown }>>([]);
       const [providers, setProviders] = useState<Array<{ id: string; name: string }>>([]);
       const [nsByProvider, setNsByProvider] = useState<Record<string, string>>({});
       const [modelOptions, setModelOptions] = useState<Record<string, string[]>>({});
@@ -306,6 +307,7 @@ moduleLoaderWindow.__ModuleLoader__!.load({
           }
           const desc = unwrap(await remote.settings.describe(), "读取设置");
           const namespaces = Array.isArray(desc?.namespaces) ? desc.namespaces : [];
+          setAllNamespaces(namespaces);
           const ns = namespaces.find((n) => n.ns === NS);
           if (!ns) {
             setError("未找到本插件的配置命名空间（插件可能未启用或未安装完成）。");
@@ -350,23 +352,77 @@ moduleLoaderWindow.__ModuleLoader__!.load({
           chain: [...d.chain, { label: "", provider: providers[0]?.id ?? "", model: "" }],
         } : d));
 
+      /**
+       * Model suggestions already stored in DSH's own provider config — no
+       * network involved. Shapes differ per adapter:
+       * - llm-deepseek / llm-deepseek-account: a volatile `models` catalog
+       *   array (objects with `id`, defaulting to the shipped catalog);
+       * - llm-pi-ai: `providers` dict keyed by route id; a route carries its
+       *   own `models` list (replaces the catalog) and the `baseURL` endpoint
+       *   interrogation needs, since llm/discoverModels never reads stored
+       *   settings or credentials ("the caller owns both").
+       */
+      const storedModelInfo = (namespaces: Array<{ ns: string; value: unknown }>, provider: string, settingsNs?: string): { models: string[]; baseURL?: string } => {
+        const section = (namespaces ?? []).find((n) => n.ns === settingsNs);
+        const value = section?.value as Record<string, unknown> | undefined;
+        const models: string[] = [];
+        const push = (m: unknown) => {
+          const id = typeof m === "string" ? m : (m as { id?: unknown } | null)?.id;
+          if (typeof id === "string" && id && !models.includes(id)) models.push(id);
+        };
+        if (!value) return { models };
+        if (Array.isArray(value.models)) value.models.forEach(push);
+        let baseURL: string | undefined;
+        if (value.providers && typeof value.providers === "object") {
+          const route = (value.providers as Record<string, unknown>)[provider];
+          if (route && typeof route === "object") {
+            const r = route as Record<string, unknown>;
+            if (Array.isArray(r.models)) r.models.forEach(push);
+            if (typeof r.baseURL === "string" && r.baseURL) baseURL = r.baseURL;
+          }
+        }
+        return { models, baseURL };
+      };
+
       const fetchModels = async (provider: string) => {
         if (!provider) return;
         setFetchingProvider(provider);
         setMsg("");
         setError("");
         try {
-          const remote = getRemote(currentCtx)!;
           const settingsNs = nsByProvider[provider];
-          if (!settingsNs) {
-            setError(`provider「${provider}」没有已注册的模型发现通道，请直接手动填写模型 id。`);
-            return;
+          const stored = storedModelInfo(allNamespaces, provider, settingsNs);
+          const models = [...stored.models];
+          let discoveryNote = "";
+          if (settingsNs) {
+            try {
+              const remote = getRemote(currentCtx)!;
+              const discovered = unwrap(
+                await remote.llm.discoverModels(settingsNs, {
+                  provider,
+                  ...(stored.baseURL ? { baseURL: stored.baseURL } : {}),
+                }),
+                "获取模型列表",
+              );
+              for (const m of discovered) if (!models.includes(m.id)) models.push(m.id);
+            } catch (e) {
+              discoveryNote = e instanceof Error ? e.message : String(e);
+            }
           }
-          const models = unwrap(await remote.llm.discoverModels(settingsNs, { provider }), "获取模型列表");
-          setModelOptions((prev) => ({ ...prev, [provider]: models.map((m) => m.id) }));
-          setMsg(`已获取 ${models.length} 个模型，下拉中可选。`);
-        } catch (e) {
-          setError(`获取模型列表失败：${e instanceof Error ? e.message : String(e)}`);
+          if (models.length > 0) {
+            setModelOptions((prev) => ({ ...prev, [provider]: models }));
+            const sources = [
+              stored.models.length > 0 ? `DSH 配置 ${stored.models.length} 个` : "",
+              discoveryNote === "" && settingsNs ? "端点探测" : "",
+            ].filter(Boolean).join(" + ");
+            setMsg(`已加载 ${models.length} 个模型（${sources}），下拉中可选。${discoveryNote ? ` 端点探测未成功：${discoveryNote}` : ""}`);
+          } else if (/no model discovery is registered/i.test(discoveryNote)) {
+            setError("该供应商的适配器没有提供模型发现，请直接手动填写模型 id（可从 设置 → 模型 里复制）。");
+          } else if (/baseURL/i.test(discoveryNote)) {
+            setError("该自定义供应商需要先在 设置 → 模型 里配置 baseURL（保存后回来重新获取），或直接手动填写模型 id。");
+          } else {
+            setError(`获取模型列表失败：${discoveryNote || "无可用来源"}。可直接手动填写模型 id。`);
+          }
         } finally {
           setFetchingProvider(null);
         }

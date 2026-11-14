@@ -242,16 +242,32 @@ moduleLoaderWindow.__ModuleLoader__!.load({
       value: DraftConfig;
       revision: number;
     }
+    interface NamespaceDescribe {
+      writable: boolean;
+      namespaces: Array<{ ns: string; value: unknown; revision: number }>;
+    }
     interface RemoteLike {
       settings: {
-        describe: () => Promise<{ writable: boolean; namespaces: Array<{ ns: string; value: unknown; revision: number }> }>;
-        update: (ns: string, patch: unknown, expectedRevision?: number) => Promise<NamespaceView>;
+        describe: () => Promise<RemoteEnvelope<NamespaceDescribe>>;
+        update: (ns: string, patch: unknown, expectedRevision?: number) => Promise<RemoteEnvelope<NamespaceView>>;
       };
       llm: {
-        listProviders: () => Promise<Array<{ id: string; name: string }>>;
-        listConfigurableProviders: () => Promise<Array<{ provider: string; settingsNs: string }>>;
-        discoverModels: (settingsNs: string, request: { provider?: string }) => Promise<Array<{ id: string; name?: string }>>;
+        listProviders: () => Promise<RemoteEnvelope<Array<{ id: string; name: string }>>>;
+        listConfigurableProviders: () => Promise<RemoteEnvelope<Array<{ provider: string; settingsNs: string }>>>;
+        discoverModels: (settingsNs: string, request: { provider?: string }) => Promise<RemoteEnvelope<Array<{ id: string; name?: string }>>>;
       };
+    }
+    /** Every ctx.remote call resolves to one wire envelope: { ok, value } or
+     *  { ok: false, error } — same shape the official ui-settings mirror
+     *  consumes (settings-mirror.ts `response.ok ? response.value : ...`). */
+    interface RemoteEnvelope<T> {
+      ok: boolean;
+      value?: T;
+      error?: { message?: string };
+    }
+    function unwrap<T>(response: RemoteEnvelope<T> | undefined, what: string): T {
+      if (response && response.ok && response.value !== undefined) return response.value;
+      throw new Error(`${what}失败：${response?.error?.message ?? "远程调用返回异常"}`);
     }
 
     function getRemote(ctx: unknown): RemoteLike | undefined {
@@ -288,8 +304,9 @@ moduleLoaderWindow.__ModuleLoader__!.load({
             setError("当前环境没有 remote 服务，无法读写配置。");
             return;
           }
-          const desc = await remote.settings.describe();
-          const ns = desc.namespaces.find((n) => n.ns === NS);
+          const desc = unwrap(await remote.settings.describe(), "读取设置");
+          const namespaces = Array.isArray(desc?.namespaces) ? desc.namespaces : [];
+          const ns = namespaces.find((n) => n.ns === NS);
           if (!ns) {
             setError("未找到本插件的配置命名空间（插件可能未启用或未安装完成）。");
             return;
@@ -297,11 +314,15 @@ moduleLoaderWindow.__ModuleLoader__!.load({
           setDraft(ns.value as DraftConfig);
           setRevision(ns.revision);
           const [provs, confs] = await Promise.all([
-            remote.llm.listProviders().catch(() => []),
-            remote.llm.listConfigurableProviders().catch(() => []),
+            remote.llm.listProviders().catch(() => undefined),
+            remote.llm.listConfigurableProviders().catch(() => undefined),
           ]);
-          setProviders(provs ?? []);
-          setNsByProvider(Object.fromEntries((confs ?? []).map((c) => [c.provider, c.settingsNs])));
+          setProviders(provs && provs.ok && Array.isArray(provs.value) ? provs.value : []);
+          setNsByProvider(
+            confs && confs.ok && Array.isArray(confs.value)
+              ? Object.fromEntries(confs.value.map((c) => [c.provider, c.settingsNs]))
+              : {},
+          );
         } catch (e) {
           setError(e instanceof Error ? e.message : String(e));
         }
@@ -341,7 +362,7 @@ moduleLoaderWindow.__ModuleLoader__!.load({
             setError(`provider「${provider}」没有已注册的模型发现通道，请直接手动填写模型 id。`);
             return;
           }
-          const models = await remote.llm.discoverModels(settingsNs, { provider });
+          const models = unwrap(await remote.llm.discoverModels(settingsNs, { provider }), "获取模型列表");
           setModelOptions((prev) => ({ ...prev, [provider]: models.map((m) => m.id) }));
           setMsg(`已获取 ${models.length} 个模型，下拉中可选。`);
         } catch (e) {
@@ -358,7 +379,7 @@ moduleLoaderWindow.__ModuleLoader__!.load({
         setError("");
         try {
           const remote = getRemote(currentCtx)!;
-          const view = await remote.settings.update(NS, draft, revision);
+          const view = unwrap(await remote.settings.update(NS, draft, revision), "保存设置");
           setRevision(view.revision);
           setDraft(view.value);
           setMsg("已保存并即时生效。");

@@ -20,18 +20,23 @@ describe("buildSectionText", () => {
   it("manual mode is a short paragraph without auto guidance", () => {
     const text = buildSectionText({ ...base, mode: "manual" }, undefined, 3);
     expect(text).toContain("手动模式");
-    expect(text).not.toContain("适合咨询");
+    expect(text).not.toContain("调用判据");
   });
 
   it("auto mode contains DSH-adapted guidance and no codex-era protocol", () => {
     const text = buildSectionText(base, undefined, 3);
     expect(text).toContain("advisor_ask");
-    expect(text).toContain("不要复述对话中已有的内容");
-    expect(text).toContain("适合咨询");
+    expect(text).toContain("不要复述对话已有的内容");
+    // merged codex refinements
+    expect(text).toContain("调用判据");
+    expect(text).toContain("不要机械调用");
+    expect(text).toContain("合并为一次咨询");
+    expect(text).toContain("先验证再决定");
     // codex-advisor protocol artifacts must not appear
     expect(text).not.toContain("ask_advisors");
     expect(text).not.toContain("CODEX_ADVISOR");
     expect(text).not.toContain("模型优先级");
+    expect(text).not.toContain("spawn_agent");
   });
 
   it("escalates at the repeat threshold and reminds below it", () => {

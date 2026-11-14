@@ -7,6 +7,7 @@ const base = {
   mode: "auto" as const,
   contextMode: "inherited" as const,
   advisorPrompt: DEFAULT_ADVISOR_PROMPT,
+  modelCatalog: {} as Record<string, string[]>,
   chain: [{ provider: "p", model: "m" }],
   trigger: { repeatThreshold: 3 },
   limits: { defaultTimeoutMs: 120000, transcriptMaxChars: 60000, perEntryMaxChars: 2000 },

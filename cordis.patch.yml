@@ -1,7 +1,23 @@
-# dsh-advisor-plugin bundle layer: register the plugin as one bundle row.
+# dsh-second-opinion bundle layer: register the plugin as one bundle row.
 # Layer semantics: a YAML array of row verbs; `insert` adds plugin rows to the
 # composed config. A row's `id` must be unique within the layer stack; `name`
 # resolves the plugin module through the installed package (package.json#main).
+# The embedded config carries the settings the user had already saved under
+# the pre-rename identity, so upgrading keeps their advisor chain intact.
 - insert:
-    - id: dsh-advisor-plugin
-      name: dsh-advisor-plugin
+    - id: dsh-second-opinion
+      name: dsh-second-opinion
+      config:
+        enabled: true
+        mode: auto
+        chain:
+          - provider: zai-coding-cn
+            model: glm-5.3-flash
+          - provider: deepseek-official
+            model: deepseek-flash
+        trigger:
+          repeatThreshold: 3
+        limits:
+          defaultTimeoutMs: 120000
+          transcriptMaxChars: 60000
+          perEntryMaxChars: 2000

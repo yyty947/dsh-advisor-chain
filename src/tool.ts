@@ -39,7 +39,7 @@ export interface AdvisorAskDeps {
 
 export function createAdvisorAskTool(deps: AdvisorAskDeps) {
   return defineTool({
-    name: "advisor_ask",
+    name: "second_opinion",
     description:
       "向配置的顾问模型征求第二意见。顾问会自动看到当前会话的完整对话记录，不要在问题中复述对话已有的内容。适用于重大方案决策前的复核、高风险判断、对自己结论把握不足、或同一问题连续受阻时；用户明确要求咨询顾问时也调用。返回顾问的回答文本。",
     parameters: {
@@ -70,10 +70,10 @@ export function createAdvisorAskTool(deps: AdvisorAskDeps) {
         return { advice: "缺少 question 参数：请提供要征求第二意见的具体问题。", model: "", truncated: false };
       }
       if (!cfg.enabled) {
-        return { advice: "顾问插件当前已停用（设置中可开启）。", model: "", truncated: false };
+        return { advice: "Second Opinion 当前已停用（设置中可开启）。", model: "", truncated: false };
       }
       if (cfg.chain.length === 0) {
-        return { advice: "顾问链尚未配置任何模型。请先到 设置 → 插件 → Advisor 添加顾问模型。", model: "", truncated: false };
+        return { advice: "顾问链尚未配置任何模型。请先到 设置 → Second Opinion 添加顾问模型。", model: "", truncated: false };
       }
       const sessionLog = sessionLogOf(exec);
       let history: DerivedMessageLike[] = [];

@@ -1,6 +1,6 @@
 {
   "meta": {
-    "title": "Advisor 顾问",
+    "title": "Second Opinion（第二意见）",
     "description": "在需要时向配置好的顾问模型链征求第二意见；顾问自动继承当前会话的完整对话上下文，失败自动顺延下一个模型。",
     "detail": "docs/DETAIL.md"
   }

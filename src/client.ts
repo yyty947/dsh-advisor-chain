@@ -1,4 +1,4 @@
-// Client half of dsh-advisor-plugin: chat card + settings tab.
+// Client half of dsh-second-opinion: chat card + settings tab.
 //
 // The web ModuleLoader evaluates this bundle and passes a `require` shim that
 // resolves shared client modules (react) from the browser module table, so
@@ -12,7 +12,7 @@ interface ModuleLoaderGlobal {
 const moduleLoaderWindow = window as unknown as ModuleLoaderGlobal;
 
 moduleLoaderWindow.__ModuleLoader__!.load({
-  id: "dsh-advisor-plugin",
+  id: "dsh-second-opinion",
   factory(require) {
     const React = require("react") as typeof import("react");
     const h = React.createElement;
@@ -70,7 +70,7 @@ moduleLoaderWindow.__ModuleLoader__!.load({
     }
 
     const advisorCardDefinition = {
-      kind: "dsh-advisor-plugin",
+      kind: "dsh-second-opinion",
       target: "chat",
       match(event: { type?: string; data?: { consultId?: string } }) {
         if (event.type === "advisor/start" && event.data?.consultId) return { id: event.data.consultId, role: "start" };
@@ -147,7 +147,7 @@ moduleLoaderWindow.__ModuleLoader__!.load({
         if (context.state === undefined) return null;
         return {
           key: context.key,
-          kind: "dsh-advisor-plugin",
+          kind: "dsh-second-opinion",
           id: context.id,
           target: "chat",
           anchorSeq: context.start?.event?.seq ?? context.matches?.[0]?.event?.seq ?? 0,
@@ -179,7 +179,7 @@ moduleLoaderWindow.__ModuleLoader__!.load({
       const statusText = failed ? "失败" : running ? "咨询中…" : "完成";
       return h("div", { style: cardStyle },
         h("div", null,
-          h("span", { style: labelStyle }, "顾问咨询"),
+          h("span", { style: labelStyle }, "Second Opinion 咨询"),
           h("span", { style: statusBadge }, statusText),
           message ? h("span", { style: badgeStyle("var(--dsw-alias-brand-primary)") }, message.model) : null,
           data.truncated ? h("span", { style: badgeStyle("var(--dsw-alias-state-warn-primary)") }, "已截断") : null),
@@ -256,7 +256,7 @@ moduleLoaderWindow.__ModuleLoader__!.load({
       return candidate.remote ?? (typeof candidate.get === "function" ? (candidate.get("remote") as RemoteLike) : undefined);
     }
 
-    const NS = "dsh-advisor-plugin";
+    const NS = "dsh-second-opinion";
     const EFFORTS: Array<{ value: string; label: string }> = [
       { value: "", label: "默认（不指定）" },
       { value: "off", label: "off（关闭思考）" },
@@ -743,7 +743,7 @@ moduleLoaderWindow.__ModuleLoader__!.load({
       };
 
       if (!draft) {
-        return h("li", { className: "dsh-advisor-plugin-settings", style: { ...SET.root, listStyle: "none", padding: 0, margin: 0 } },
+        return h("li", { className: "dsh-second-opinion-settings", style: { ...SET.root, listStyle: "none", padding: 0, margin: 0 } },
           h("div", { style: SET.row },
             h("div", { style: error ? SET.msgErr : SET.desc }, error || "加载配置中…"),
             error ? h("button", { style: SET.btn, type: "button", onClick: () => reload() }, "重试") : null));
@@ -826,11 +826,11 @@ moduleLoaderWindow.__ModuleLoader__!.load({
               onChange: (e: React.ChangeEvent<HTMLInputElement>) => patchEntry(index, { timeoutMs: e.target.value === "" ? undefined : Number(e.target.value) }),
             }))));
 
-      return h("li", { className: "dsh-advisor-plugin-settings", style: { ...SET.root, listStyle: "none", padding: 0, margin: 0 } },
+      return h("li", { className: "dsh-second-opinion-settings", style: { ...SET.root, listStyle: "none", padding: 0, margin: 0 } },
         // Saving locks every control below (M3): responses never race edits.
         h("div", { style: { pointerEvents: saving ? "none" : "auto", opacity: saving ? 0.6 : 1 } },
-          h(SRow, { title: "启用 Advisor 顾问", desc: "停用后 advisor_ask 不可用，也不再注入使用边界提示。" },
-            h(Toggle, { checked: draft.enabled, label: "启用 Advisor 顾问", onChange: (next: boolean) => patch({ enabled: next }) })),
+          h(SRow, { title: "启用 Second Opinion", desc: "停用后 second_opinion 不可用，也不再注入使用边界提示。" },
+            h(Toggle, { checked: draft.enabled, label: "启用 Second Opinion", onChange: (next: boolean) => patch({ enabled: next }) })),
           h(SRow, { title: "触发模式", desc: "auto：主模型按调用判据自主咨询；manual：仅用户明确要求时咨询。" },
             h(Dropdown, {
               value: draft.mode,
@@ -848,7 +848,7 @@ moduleLoaderWindow.__ModuleLoader__!.load({
               h("div", { style: SET.desc }, "按顺序尝试；某项失败（出错或超时无产出）自动顺延下一个。")),
             h("button", { style: SET.btn, type: "button", onClick: addEntry }, "＋ 添加顾问模型")),
           ...draft.chain.map((entry, index) => entryNode(index, entry)),
-          draft.chain.length === 0 ? h("div", { style: { ...SET.desc, padding: "0 0 12px" } }, "尚未配置顾问模型——配置后 advisor_ask 才可用。") : null,
+          draft.chain.length === 0 ? h("div", { style: { ...SET.desc, padding: "0 0 12px" } }, "尚未配置顾问模型——配置后 second_opinion 才可用。") : null,
           h("div", { style: { padding: "16px 0", borderBottom: "0.5px solid var(--dsw-alias-border-l2)" } },
             h("div", { style: SET.title }, "顾问系统提示词"),
             h("div", { style: SET.desc }, "整条链共用；清空并保存可回落到插件默认。"),
@@ -887,7 +887,7 @@ moduleLoaderWindow.__ModuleLoader__!.load({
     }
 
     // ---------- module ----------
-    const name = "dsh-advisor-plugin";
+    const name = "dsh-second-opinion";
     // Cordis requires every accessed service AND each remote.<namespace>
     // child service declared in inject (same pattern as the official
     // ui-settings client: ['remote', 'remote.settings']). We use the
@@ -906,9 +906,9 @@ moduleLoaderWindow.__ModuleLoader__!.load({
       currentCtx = ctx;
       if (ctx.uiConversation?.events?.register) ctx.uiConversation.events.register(advisorCardDefinition);
       ctx.slots.inject("conversation.chat.node", () =>
-        ctx.slots.register({ name: "conversation.chat.node", key: "dsh-advisor-plugin", locale: "chat" }, AdvisorCardView as (props: unknown) => React.ReactElement));
+        ctx.slots.register({ name: "conversation.chat.node", key: "dsh-second-opinion", locale: "chat" }, AdvisorCardView as (props: unknown) => React.ReactElement));
       ctx.slots.inject("settings.section", () =>
-        ctx.slots.register({ name: "settings.section", id: "dsh-advisor-plugin", order: 0, label: "Advisor 顾问" }, AdvisorSettingsTab as unknown as (props: unknown) => React.ReactElement));
+        ctx.slots.register({ name: "settings.section", id: "dsh-second-opinion", order: 0, label: "Second Opinion" }, AdvisorSettingsTab as unknown as (props: unknown) => React.ReactElement));
     }
 
     return { name, inject, apply };

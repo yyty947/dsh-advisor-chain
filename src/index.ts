@@ -5,7 +5,7 @@ import { createAdvisorAskTool } from "./tool";
 
 export { Config } from "./config";
 
-export const name = "dsh-advisor-plugin";
+export const name = "dsh-second-opinion";
 
 export const inject = ["tools", "llm", "systemPrompt", "sessions"];
 
@@ -33,14 +33,14 @@ export function apply(ctx: HostContext, _config: unknown) {
     pressure.handleEvent(session?.id ?? "", event as Parameters<typeof pressure.handleEvent>[1]);
   });
 
-  ctx.effect(() => ctx.tools.register(createAdvisorAskTool({ ctx: ctx as unknown as Parameters<typeof createAdvisorAskTool>[0]["ctx"], getConfig: liveConfig })), "dsh-advisor-plugin: advisor_ask tool");
+  ctx.effect(() => ctx.tools.register(createAdvisorAskTool({ ctx: ctx as unknown as Parameters<typeof createAdvisorAskTool>[0]["ctx"], getConfig: liveConfig })), "dsh-second-opinion: second_opinion tool");
 
   const systemPrompt = ctx.systemPrompt ?? (typeof ctx.get === "function" ? (ctx.get("systemPrompt") as HostContext["systemPrompt"]) : undefined);
   if (systemPrompt) {
     ctx.effect(
       () =>
         systemPrompt.section({
-          name: "dsh-advisor-plugin-boundary",
+          name: "dsh-second-opinion-boundary",
           order: 151,
           text: (assembly) => {
             const cfg = liveConfig();
@@ -48,7 +48,7 @@ export function apply(ctx: HostContext, _config: unknown) {
             return buildSectionText(cfg, pressure.get(sessionId), cfg.trigger.repeatThreshold);
           },
         }),
-      "dsh-advisor-plugin: system prompt section",
+      "dsh-second-opinion: system prompt section",
     );
   }
 

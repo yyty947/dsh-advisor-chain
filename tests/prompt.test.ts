@@ -25,7 +25,7 @@ describe("buildSectionText", () => {
 
   it("auto mode contains DSH-adapted guidance and no codex-era protocol", () => {
     const text = buildSectionText(base, undefined, 3);
-    expect(text).toContain("advisor_ask");
+    expect(text).toContain("second_opinion");
     expect(text).toContain("不要复述对话已有的内容");
     // merged codex refinements
     expect(text).toContain("调用判据");

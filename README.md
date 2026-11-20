@@ -17,6 +17,10 @@ DeepSeek Harness（DSH）插件：让主模型在需要时——自动判断或�
 
 设置入口：**设置 → Second Opinion**。设计文档与决策记录见 [HANDOVER-DSH-ADVISOR.md](HANDOVER-DSH-ADVISOR.md)。
 
+## 灵感来源
+
+本项目的设计思路来自 [pixelsama/codex-advisor](https://github.com/pixelsama/codex-advisor)——一个为 Codex 打造的第二意见咨询插件。「让独立模型复核关键决策」这个想法源自它；本插件则是针对 DeepSeek Harness 的重新实现：机制上换用 DSH 原生的会话投影、模型路由与设置体系，并在此基础上扩展了模型链降级、盲审模式、追问线程与双意见对比。感谢原作者的启发与分享。
+
 ## 安装
 
 **npm 包（推荐——预构建安装免构建授权）**
@@ -55,6 +59,10 @@ MIT
 A DeepSeek Harness (DSH) plugin: the main model asks a configured **advisor model chain** for a second opinion whenever needed — auto-judged or user-triggered.
 
 Highlights: automatic full-conversation context inheritance via `deriveMessages()` (the advisor sees what the main model sees; no manual background hand-off); an ordered fallback chain with per-entry timeout and explicit truncation marking; auto/manual trigger modes with a repeated-question hard trigger; durable consultation cards in the chat stream; and a native settings page with model-chain editing. See [HANDOVER-DSH-ADVISOR.md](HANDOVER-DSH-ADVISOR.md) for the design history.
+
+## Inspiration
+
+The idea for this project comes from [pixelsama/codex-advisor](https://github.com/pixelsama/codex-advisor), a second-opinion plugin for Codex. It inspired the core premise — letting an independent model review key decisions — which is reimplemented here for DeepSeek Harness using its native session projection, model routing, and settings, extended with model-chain failover, blind review, follow-up threads, and dual opinions. Thanks to the original author for the inspiration.
 
 ## Install
 

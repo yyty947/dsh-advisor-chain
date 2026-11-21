@@ -1026,7 +1026,7 @@ moduleLoaderWindow.__ModuleLoader__!.load({
             padding: "10px 16px",
             background: surface,
             borderTop: "1px solid var(--dsw-alias-border-l2)",
-            borderRadius: "10px 10px 0 0",
+            borderRadius: 8,
             boxShadow: "0 -4px 16px rgba(0,0,0,0.12)",
           },
         },

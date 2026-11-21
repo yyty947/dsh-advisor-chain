@@ -624,33 +624,59 @@ moduleLoaderWindow.__ModuleLoader__!.load({
       // Persistent bottom dock: pinned to the settings scroll container's
       // visible bottom edge via fixed positioning (a plain sticky element
       // stops at our li's flow end and leaves the shell's trailing padding
-      // visible as a gap). contentPad reserves dock height so nothing is
-      // occluded when scrolled to the very bottom.
+      // visible as a gap). The scroll container is chosen as the closest
+      // ancestor that actually overflows; the dock surface samples the
+      // panel's own computed background so it blends in both themes.
+      // contentPad reserves dock height so nothing is occluded when scrolled
+      // to the very bottom.
       const rootRef = (React as { useRef?: (v: unknown) => { current: unknown } }).useRef?.(null) ?? { current: null };
       const dockRef = (React as { useRef?: (v: unknown) => { current: unknown } }).useRef?.(null) ?? { current: null };
-      const [dockStyle, setDockStyle] = useState<React.CSSProperties>({ position: "sticky", bottom: 0 });
+      const [dockStyle, setDockStyle] = useState<React.CSSProperties>({ position: "fixed", bottom: 8, left: 16, right: 16 });
       const [contentPad, setContentPad] = useState(0);
 
       const updateDock = () => {
         const root = rootRef.current as HTMLElement | null;
         const dock = dockRef.current as HTMLElement | null;
         if (!root || !dock) return;
-        let node: HTMLElement | null = root.parentElement;
+        // Scroll container: closest ancestor with a scrolling overflow value;
+        // prefer one that actually overflows content right now.
+        let fallback: HTMLElement | undefined;
         let scroller: HTMLElement | undefined;
-        while (node) {
+        let node: HTMLElement | null = root.parentElement;
+        while (node && node !== document.body) {
           const oy = getComputedStyle(node).overflowY;
-          if (oy === "auto" || oy === "scroll" || oy === "overlay") { scroller = node; break; }
+          if (oy === "auto" || oy === "scroll" || oy === "overlay") {
+            if (!fallback) fallback = node;
+            if (node.scrollHeight > node.clientHeight + 1) { scroller = node; break; }
+          }
           node = node.parentElement;
         }
+        if (!scroller) scroller = fallback;
         const rect = (scroller ?? root).getBoundingClientRect();
+        const s = scroller ? getComputedStyle(scroller) : undefined;
+        const insetL = s ? parseFloat(s.paddingLeft) || 0 : 0;
+        const insetR = s ? parseFloat(s.paddingRight) || 0 : 0;
         const dockHeight = dock.offsetHeight;
-        setDockStyle({
+        // Pin to the scroller's visible bottom edge, clamped to the viewport.
+        const bottomEdge = Math.min(rect.bottom, window.innerHeight - 8);
+        const top = Math.max(8, Math.round(bottomEdge - dockHeight));
+        // Surface color: first non-transparent computed background walking up
+        // from our root — exactly the surface the settings rows sit on.
+        let surface = "";
+        let surfaceNode: HTMLElement | null = root;
+        while (surfaceNode) {
+          const bg = getComputedStyle(surfaceNode).backgroundColor;
+          if (bg && bg !== "rgba(0, 0, 0, 0)" && bg !== "transparent") { surface = bg; break; }
+          surfaceNode = surfaceNode.parentElement;
+        }
+        setDockStyle((prev) => ({
+          ...prev,
           position: "fixed",
-          left: Math.round(rect.left + 16),
-          width: Math.round(rect.width - 32),
-          top: Math.round(rect.bottom - dockHeight),
-          zIndex: 30,
-        });
+          left: Math.round(rect.left + insetL + 8),
+          width: Math.max(240, Math.round(rect.width - insetL - insetR - 16)),
+          top,
+          background: surface || "var(--dsw-alias-bg-base)",
+        }));
         setContentPad(dockHeight + 8);
       };
 
@@ -1038,7 +1064,6 @@ moduleLoaderWindow.__ModuleLoader__!.load({
             justifyContent: "space-between",
             gap: 12,
             padding: "10px 16px",
-            background: "var(--dsw-alias-bg-base)",
             borderTop: "1px solid var(--dsw-alias-border-l2)",
             borderRadius: "10px 10px 0 0",
             boxShadow: "0 -4px 16px rgba(0,0,0,0.12)",

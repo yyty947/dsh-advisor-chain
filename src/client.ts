@@ -965,29 +965,38 @@ moduleLoaderWindow.__ModuleLoader__!.load({
           numRow("抄本字符预算", "发送给顾问的对话抄本总字符上限；超出时保留最新部分并标注省略。", draft.limits?.transcriptMaxChars ?? 60000, 2000, 400000, 1000, (v) => patch({ limits: { ...draft.limits, transcriptMaxChars: v || 60000 } })),
           numRow("单条消息上限", "抄本中单条消息（含工具结果）的最大字符数。", draft.limits?.perEntryMaxChars ?? 2000, 200, 20000, 100, (v) => patch({ limits: { ...draft.limits, perEntryMaxChars: v || 2000 } })),
           numRow("默认超时（毫秒）", "链上条目未单独配置超时时的单次调用上限。", draft.limits?.defaultTimeoutMs ?? 120000, 1000, 600000, 500, (v) => patch({ limits: { ...draft.limits, defaultTimeoutMs: v || 120000 } }), true)),
-        // Sticky save bar: status announcements live here (aria-live), and the
-        // unsaved-changes chip keeps the draft model from silently eating edits.
-        // Same background as the page so the bar blends in instead of reading
-        // as a gray band; only the hairline separates it from scrolled content.
-        h("div", {
-          style: {
-            position: "sticky",
-            bottom: 0,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "flex-end",
-            gap: 12,
-            padding: "10px 2px",
-            background: "var(--dsw-alias-bg-base)",
-            borderBottom: "none",
-            borderTop: "0.5px solid var(--dsw-alias-border-l1)",
-          },
-        },
-          h("div", { role: "status", "aria-live": "polite", style: { flex: 1, minWidth: 0 } },
-            error ? h("span", { style: SET.msgErr }, error) : msg ? h("span", { style: SET.msgOk }, msg) : null),
-          dirty ? h("span", { style: SET.msgErr }, "有未保存更改") : null,
-          dirty ? h("button", { style: SET.btn, type: "button", onClick: () => reload({ silent: true }) }, "放弃修改") : null,
-          h("button", { style: SET.btnPrimary, type: "button", disabled: saving, onClick: save }, saving ? "保存中…" : "保存")));
+        // Status announcements render in normal flow above the action row —
+        // fully readable, never crammed into the floating bar.
+        msg || error
+          ? h("div", { role: "status", "aria-live": "polite", style: { margin: "10px 0 4px" } },
+              error
+                ? h("div", { style: SET.msgErr }, error)
+                : h("div", { style: SET.msgOk }, msg))
+          : null,
+        // The floating action dock appears ONLY when there is something to act
+        // on (unsaved changes / saving) — a deliberate attention signal, not
+        // permanent noise. Clean state keeps a plain save row in flow.
+        dirty || saving
+          ? h("div", {
+              style: {
+                position: "sticky",
+                bottom: 0,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "flex-end",
+                gap: 10,
+                padding: "10px 16px",
+                background: "var(--dsw-alias-bg-base)",
+                borderTop: "1px solid var(--dsw-alias-border-l2)",
+                borderRadius: "10px 10px 0 0",
+                boxShadow: "0 -4px 16px rgba(0,0,0,0.12)",
+              },
+            },
+              dirty ? h("span", { style: SET.msgErr }, "有未保存更改") : null,
+              dirty ? h("button", { style: SET.btn, type: "button", onClick: () => reload({ silent: true }) }, "放弃修改") : null,
+              h("button", { style: SET.btnPrimary, type: "button", disabled: saving, onClick: save }, saving ? "保存中…" : "保存"))
+          : h("div", { style: { display: "flex", justifyContent: "flex-end", padding: "10px 2px" } },
+              h("button", { style: SET.btnPrimary, type: "button", disabled: saving, onClick: save }, saving ? "保存中…" : "保存")));
     }
 
     // ---------- module ----------

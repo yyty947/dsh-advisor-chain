@@ -621,82 +621,45 @@ moduleLoaderWindow.__ModuleLoader__!.load({
       const [error, setError] = useState("");
       // Draft vs last-saved snapshot: drives the unsaved-changes bar (H1).
       const [savedSnapshot, setSavedSnapshot] = useState("");
-      // Persistent bottom dock: pinned to the settings scroll container's
-      // visible bottom edge via fixed positioning (a plain sticky element
-      // stops at our li's flow end and leaves the shell's trailing padding
-      // visible as a gap). The scroll container is chosen as the closest
-      // ancestor that actually overflows; the dock surface samples the
-      // panel's own computed background so it blends in both themes.
-      // contentPad reserves dock height so nothing is occluded when scrolled
-      // to the very bottom.
-      const rootRef = (React as { useRef?: (v: unknown) => { current: unknown } }).useRef?.(null) ?? { current: null };
+      // Persistent bottom dock (position: sticky inside our li): always
+      // pinned to the visible bottom edge while scrolling. The shell's
+      // trailing padding below our li would show as a gap at full scroll, so
+      // it is measured and cancelled with an equal negative margin. The dock
+      // surface samples the panel's own computed background so it blends in
+      // both themes. li reserves dock height so nothing is occluded.
       const dockRef = (React as { useRef?: (v: unknown) => { current: unknown } }).useRef?.(null) ?? { current: null };
-      const [dockStyle, setDockStyle] = useState<React.CSSProperties>({ position: "fixed", bottom: 8, left: 16, right: 16 });
-      const [contentPad, setContentPad] = useState(0);
-
-      const updateDock = () => {
-        const root = rootRef.current as HTMLElement | null;
-        const dock = dockRef.current as HTMLElement | null;
-        if (!root || !dock) return;
-        // Scroll container: closest ancestor with a scrolling overflow value;
-        // prefer one that actually overflows content right now.
-        let fallback: HTMLElement | undefined;
-        let scroller: HTMLElement | undefined;
-        let node: HTMLElement | null = root.parentElement;
-        while (node && node !== document.body) {
-          const oy = getComputedStyle(node).overflowY;
-          if (oy === "auto" || oy === "scroll" || oy === "overlay") {
-            if (!fallback) fallback = node;
-            if (node.scrollHeight > node.clientHeight + 1) { scroller = node; break; }
-          }
-          node = node.parentElement;
-        }
-        if (!scroller) scroller = fallback;
-        const rect = (scroller ?? root).getBoundingClientRect();
-        const s = scroller ? getComputedStyle(scroller) : undefined;
-        const insetL = s ? parseFloat(s.paddingLeft) || 0 : 0;
-        const insetR = s ? parseFloat(s.paddingRight) || 0 : 0;
-        const dockHeight = dock.offsetHeight;
-        // Pin to the scroller's visible bottom edge, clamped to the viewport.
-        const bottomEdge = Math.min(rect.bottom, window.innerHeight - 8);
-        const top = Math.max(8, Math.round(bottomEdge - dockHeight));
-        // Surface color: first non-transparent computed background walking up
-        // from our root — exactly the surface the settings rows sit on.
-        let surface = "";
-        let surfaceNode: HTMLElement | null = root;
-        while (surfaceNode) {
-          const bg = getComputedStyle(surfaceNode).backgroundColor;
-          if (bg && bg !== "rgba(0, 0, 0, 0)" && bg !== "transparent") { surface = bg; break; }
-          surfaceNode = surfaceNode.parentElement;
-        }
-        setDockStyle((prev) => ({
-          ...prev,
-          position: "fixed",
-          left: Math.round(rect.left + insetL + 8),
-          width: Math.max(240, Math.round(rect.width - insetL - insetR - 16)),
-          top,
-          background: surface || "var(--dsw-alias-bg-base)",
-        }));
-        setContentPad(dockHeight + 8);
-      };
+      const [surface, setSurface] = useState("var(--dsw-alias-bg-base)");
+      const [scrollerPad, setScrollerPad] = useState(0);
+      const [dockHeight, setDockHeight] = useState(48);
 
       useEffect(() => {
-        updateDock();
-        const root = rootRef.current as HTMLElement | null;
-        let node: HTMLElement | null = root?.parentElement ?? null;
-        let scroller: HTMLElement | undefined;
+        // Surface: first non-transparent background walking up from the dock.
+        let node = dockRef.current as HTMLElement | null;
         while (node) {
-          const oy = getComputedStyle(node).overflowY;
-          if (oy === "auto" || oy === "scroll" || oy === "overlay") { scroller = node; break; }
+          const bg = getComputedStyle(node).backgroundColor;
+          if (bg && bg !== "rgba(0, 0, 0, 0)" && bg !== "transparent") { setSurface(bg); break; }
           node = node.parentElement;
         }
-        scroller?.addEventListener("scroll", updateDock, { passive: true });
-        window.addEventListener("resize", updateDock);
-        return () => {
-          scroller?.removeEventListener("scroll", updateDock);
-          window.removeEventListener("resize", updateDock);
+        // The settings scroller: closest ancestor with a scrolling overflow.
+        let scroller: HTMLElement | undefined;
+        let p: HTMLElement | null = (dockRef.current as HTMLElement | null)?.parentElement ?? null;
+        while (p) {
+          const oy = getComputedStyle(p).overflowY;
+          if (oy === "auto" || oy === "scroll" || oy === "overlay") { scroller = p; break; }
+          p = p.parentElement;
+        }
+        if (scroller) setScrollerPad(parseFloat(getComputedStyle(scroller).paddingBottom) || 0);
+        const onResize = () => {
+          if (scroller) setScrollerPad(parseFloat(getComputedStyle(scroller).paddingBottom) || 0);
         };
-      });
+        window.addEventListener("resize", onResize);
+        return () => window.removeEventListener("resize", onResize);
+      }, []);
+
+      useEffect(() => {
+        const dock = dockRef.current as HTMLElement | null;
+        if (dock) setDockHeight(dock.offsetHeight + 8);
+      }, [msg, error]);
 
       const reload = async (opts?: { silent?: boolean }) => {
         if (!opts?.silent) { setMsg(""); setError(""); }
@@ -997,8 +960,7 @@ moduleLoaderWindow.__ModuleLoader__!.load({
 
       return h("li", {
         className: "dsh-advisor-chain-settings",
-        ref: (node: HTMLElement) => { (rootRef as { current: unknown }).current = node; },
-        style: { ...SET.root, listStyle: "none", padding: 0, margin: 0, paddingBottom: contentPad },
+        style: { ...SET.root, listStyle: "none", padding: 0, margin: 0, paddingBottom: dockHeight },
       },
         // Saving locks every control below (M3): responses never race edits.
         h("div", { style: { pointerEvents: saving ? "none" : "auto", opacity: saving ? 0.6 : 1 } },
@@ -1045,25 +1007,24 @@ moduleLoaderWindow.__ModuleLoader__!.load({
           numRow("抄本字符预算", "发送给顾问的对话抄本总字符上限；超出时保留最新部分并标注省略。", draft.limits?.transcriptMaxChars ?? 60000, 2000, 400000, 1000, (v) => patch({ limits: { ...draft.limits, transcriptMaxChars: v || 60000 } })),
           numRow("单条消息上限", "抄本中单条消息（含工具结果）的最大字符数。", draft.limits?.perEntryMaxChars ?? 2000, 200, 20000, 100, (v) => patch({ limits: { ...draft.limits, perEntryMaxChars: v || 2000 } })),
           numRow("默认超时（毫秒）", "链上条目未单独配置超时时的单次调用上限。", draft.limits?.defaultTimeoutMs ?? 120000, 1000, 600000, 500, (v) => patch({ limits: { ...draft.limits, defaultTimeoutMs: v || 120000 } }), true)),
-        // Status announcements render in normal flow above the action row —
-        // fully readable, never crammed into the floating bar.
-        // The bottom dock is ALWAYS present: status message left, actions
-        // right. It is fixed-positioned against the settings scroll
-        // container's visible bottom edge (see updateDock), and the li
-        // reserves its height via contentPad so nothing is ever occluded
-        // when scrolled to the very bottom, and the shell's trailing padding
-        // never shows as a gap.
+        // The bottom dock is ALWAYS present (sticky): status message left,
+        // actions right. The shell's trailing padding below our li is
+        // cancelled with an equal negative margin so the dock sits flush at
+        // the very bottom — no gap, no occlusion (li reserves dock height).
         h("div", {
           ref: (node: HTMLElement) => { (dockRef as { current: unknown }).current = node; },
           role: "status",
           "aria-live": "polite",
           style: {
-            ...dockStyle,
+            position: "sticky",
+            bottom: 0,
+            marginBottom: scrollerPad ? -scrollerPad : 0,
             display: "flex",
             alignItems: "center",
             justifyContent: "space-between",
             gap: 12,
             padding: "10px 16px",
+            background: surface,
             borderTop: "1px solid var(--dsw-alias-border-l2)",
             borderRadius: "10px 10px 0 0",
             boxShadow: "0 -4px 16px rgba(0,0,0,0.12)",

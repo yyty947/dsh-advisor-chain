@@ -621,6 +621,56 @@ moduleLoaderWindow.__ModuleLoader__!.load({
       const [error, setError] = useState("");
       // Draft vs last-saved snapshot: drives the unsaved-changes bar (H1).
       const [savedSnapshot, setSavedSnapshot] = useState("");
+      // Persistent bottom dock: pinned to the settings scroll container's
+      // visible bottom edge via fixed positioning (a plain sticky element
+      // stops at our li's flow end and leaves the shell's trailing padding
+      // visible as a gap). contentPad reserves dock height so nothing is
+      // occluded when scrolled to the very bottom.
+      const rootRef = (React as { useRef?: (v: unknown) => { current: unknown } }).useRef?.(null) ?? { current: null };
+      const dockRef = (React as { useRef?: (v: unknown) => { current: unknown } }).useRef?.(null) ?? { current: null };
+      const [dockStyle, setDockStyle] = useState<React.CSSProperties>({ position: "sticky", bottom: 0 });
+      const [contentPad, setContentPad] = useState(0);
+
+      const updateDock = () => {
+        const root = rootRef.current as HTMLElement | null;
+        const dock = dockRef.current as HTMLElement | null;
+        if (!root || !dock) return;
+        let node: HTMLElement | null = root.parentElement;
+        let scroller: HTMLElement | undefined;
+        while (node) {
+          const oy = getComputedStyle(node).overflowY;
+          if (oy === "auto" || oy === "scroll" || oy === "overlay") { scroller = node; break; }
+          node = node.parentElement;
+        }
+        const rect = (scroller ?? root).getBoundingClientRect();
+        const dockHeight = dock.offsetHeight;
+        setDockStyle({
+          position: "fixed",
+          left: Math.round(rect.left + 16),
+          width: Math.round(rect.width - 32),
+          top: Math.round(rect.bottom - dockHeight),
+          zIndex: 30,
+        });
+        setContentPad(dockHeight + 8);
+      };
+
+      useEffect(() => {
+        updateDock();
+        const root = rootRef.current as HTMLElement | null;
+        let node: HTMLElement | null = root?.parentElement ?? null;
+        let scroller: HTMLElement | undefined;
+        while (node) {
+          const oy = getComputedStyle(node).overflowY;
+          if (oy === "auto" || oy === "scroll" || oy === "overlay") { scroller = node; break; }
+          node = node.parentElement;
+        }
+        scroller?.addEventListener("scroll", updateDock, { passive: true });
+        window.addEventListener("resize", updateDock);
+        return () => {
+          scroller?.removeEventListener("scroll", updateDock);
+          window.removeEventListener("resize", updateDock);
+        };
+      });
 
       const reload = async (opts?: { silent?: boolean }) => {
         if (!opts?.silent) { setMsg(""); setError(""); }
@@ -919,7 +969,11 @@ moduleLoaderWindow.__ModuleLoader__!.load({
               onChange: (e: React.ChangeEvent<HTMLInputElement>) => patchEntry(index, { timeoutMs: e.target.value === "" ? undefined : Number(e.target.value) }),
             }))));
 
-      return h("li", { className: "dsh-advisor-chain-settings", style: { ...SET.root, listStyle: "none", padding: 0, margin: 0 } },
+      return h("li", {
+        className: "dsh-advisor-chain-settings",
+        ref: (node: HTMLElement) => { (rootRef as { current: unknown }).current = node; },
+        style: { ...SET.root, listStyle: "none", padding: 0, margin: 0, paddingBottom: contentPad },
+      },
         // Saving locks every control below (M3): responses never race edits.
         h("div", { style: { pointerEvents: saving ? "none" : "auto", opacity: saving ? 0.6 : 1 } },
           h(SRow, { title: "启用 Second Opinion", desc: "停用后 second_opinion 不可用，也不再注入使用边界提示。" },
@@ -967,36 +1021,40 @@ moduleLoaderWindow.__ModuleLoader__!.load({
           numRow("默认超时（毫秒）", "链上条目未单独配置超时时的单次调用上限。", draft.limits?.defaultTimeoutMs ?? 120000, 1000, 600000, 500, (v) => patch({ limits: { ...draft.limits, defaultTimeoutMs: v || 120000 } }), true)),
         // Status announcements render in normal flow above the action row —
         // fully readable, never crammed into the floating bar.
-        msg || error
-          ? h("div", { role: "status", "aria-live": "polite", style: { margin: "10px 0 4px" } },
-              error
-                ? h("div", { style: SET.msgErr }, error)
-                : h("div", { style: SET.msgOk }, msg))
-          : null,
-        // The floating action dock appears ONLY when there is something to act
-        // on (unsaved changes / saving) — a deliberate attention signal, not
-        // permanent noise. Clean state keeps a plain save row in flow.
-        dirty || saving
-          ? h("div", {
-              style: {
-                position: "sticky",
-                bottom: 0,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "flex-end",
-                gap: 10,
-                padding: "10px 16px",
-                background: "var(--dsw-alias-bg-base)",
-                borderTop: "1px solid var(--dsw-alias-border-l2)",
-                borderRadius: "10px 10px 0 0",
-                boxShadow: "0 -4px 16px rgba(0,0,0,0.12)",
-              },
-            },
-              dirty ? h("span", { style: SET.msgErr }, "有未保存更改") : null,
-              dirty ? h("button", { style: SET.btn, type: "button", onClick: () => reload({ silent: true }) }, "放弃修改") : null,
-              h("button", { style: SET.btnPrimary, type: "button", disabled: saving, onClick: save }, saving ? "保存中…" : "保存"))
-          : h("div", { style: { display: "flex", justifyContent: "flex-end", padding: "10px 2px" } },
-              h("button", { style: SET.btnPrimary, type: "button", disabled: saving, onClick: save }, saving ? "保存中…" : "保存")));
+        // The bottom dock is ALWAYS present: status message left, actions
+        // right. It is fixed-positioned against the settings scroll
+        // container's visible bottom edge (see updateDock), and the li
+        // reserves its height via contentPad so nothing is ever occluded
+        // when scrolled to the very bottom, and the shell's trailing padding
+        // never shows as a gap.
+        h("div", {
+          ref: (node: HTMLElement) => { (dockRef as { current: unknown }).current = node; },
+          role: "status",
+          "aria-live": "polite",
+          style: {
+            ...dockStyle,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 12,
+            padding: "10px 16px",
+            background: "var(--dsw-alias-bg-base)",
+            borderTop: "1px solid var(--dsw-alias-border-l2)",
+            borderRadius: "10px 10px 0 0",
+            boxShadow: "0 -4px 16px rgba(0,0,0,0.12)",
+          },
+        },
+          h("div", { style: { flex: 1, minWidth: 0, maxHeight: 54, overflowY: "auto" } },
+            error
+              ? h("div", { style: SET.msgErr }, error)
+              : msg
+                ? h("div", { style: SET.msgOk }, msg)
+                : dirty
+                  ? h("div", { style: SET.msgErr }, "有未保存更改")
+                  : null),
+          h("div", { style: { display: "flex", alignItems: "center", gap: 10 } },
+            dirty ? h("button", { style: SET.btn, type: "button", onClick: () => reload({ silent: true }) }, "放弃修改") : null,
+            h("button", { style: SET.btnPrimary, type: "button", disabled: saving, onClick: save }, saving ? "保存中…" : "保存"))));
     }
 
     // ---------- module ----------

@@ -23,7 +23,9 @@ DeepSeek Harness（DSH）插件：让主模型在需要时——自动判断或�
 
 ## 安装
 
-**npm 包（推荐——预构建安装免构建授权）**
+**插件市场（推荐）**：DSH 设置 → 插件市场，搜索 **dsh-advisor-chain**，一键安装。
+
+**npm 包**
 
 ```bash
 dsh plugin --profile desktop add dsh-advisor-chain
@@ -65,6 +67,8 @@ Highlights: automatic full-conversation context inheritance via `deriveMessages(
 The idea for this project comes from [pixelsama/codex-advisor](https://github.com/pixelsama/codex-advisor), a second-opinion plugin for Codex. It inspired the core premise — letting an independent model review key decisions — which is reimplemented here for DeepSeek Harness using its native session projection, model routing, and settings, extended with model-chain failover, blind review, follow-up threads, and dual opinions. Thanks to the original author for the inspiration.
 
 ## Install
+
+**Plugin market (recommended)**: DSH Settings → Plugin Market, search **dsh-advisor-chain**.
 
 ```bash
 dsh plugin --profile desktop add dsh-advisor-chain

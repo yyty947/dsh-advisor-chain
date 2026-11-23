@@ -29,7 +29,13 @@ DeepSeek Harness（DSH）插件：让主模型在需要时——自动判断或�
 
 **其他变化。** 父对话里不再有内嵌的实时滚字（顾问过程在子代理面板查看）；旧版本的 `consult_id` 不再可追问；每条链的「温度」设置被移除（子代理接口不支持）。
 
-完整变更见 [CHANGELOG.md](CHANGELOG.md)。设计文档见 [docs/DESIGN-0.3.10.md](docs/DESIGN-0.3.10.md)；早期设计记录见 [HANDOVER-DSH-ADVISOR.md](HANDOVER-DSH-ADVISOR.md)。
+完整变更见 [CHANGELOG.md](CHANGELOG.md)；设计文档见 [docs/DESIGN-0.3.10.md](docs/DESIGN-0.3.10.md)。
+
+## 界面
+
+| 设置页 | 咨询卡片 | 追问 |
+|---|---|---|
+| ![设置页](https://raw.githubusercontent.com/yyty947/dsh-advisor-chain/main/assets/screenshot-settings.png) | ![咨询卡片](https://raw.githubusercontent.com/yyty947/dsh-advisor-chain/main/assets/screenshot-consultation-card.png) | ![追问](https://raw.githubusercontent.com/yyty947/dsh-advisor-chain/main/assets/screenshot-follow-up.png) |
 
 ## 灵感来源
 

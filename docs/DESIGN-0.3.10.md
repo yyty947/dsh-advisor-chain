@@ -1,6 +1,6 @@
 # Second Opinion 0.3.10 设计（原生 subagent 引擎）
 
-> 本文是 0.3.10 的实现规格。背景与上一版审计见 `HANDOVER-v2.md`；用户可见说明见 `README.md` 与 `CHANGELOG.md`。
+> 本文是 0.3.10 的实现规格。用户可见说明见 `README.md` 与 `CHANGELOG.md`。
 
 ## 1. 定位
 

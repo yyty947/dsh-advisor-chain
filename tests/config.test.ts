@@ -10,7 +10,7 @@ const legacyConfig = {
   advisorPrompt: "custom prompt",
   chain: [
     { label: "", provider: "z-ai", model: "glm-5.3-flash", reasoningEffort: "max", temperature: 0, maxTokens: 65536, timeoutMs: 60000 },
-    { provider: "iflab", model: "qwen-claude", reasoningEffort: "max" },
+    { provider: "lab-gateway", model: "qwen-example", reasoningEffort: "max" },
   ],
   trigger: { repeatThreshold: 3 },
   limits: { defaultTimeoutMs: 120000, transcriptMaxChars: 60000, perEntryMaxChars: 2000 },
@@ -30,7 +30,7 @@ describe("normalizeConfig", () => {
       maxTokens: 65536,
       timeoutMs: 60000,
     });
-    expect(cfg.chain[1]).toEqual({ provider: "iflab", model: "qwen-claude", reasoningEffort: "max" });
+    expect(cfg.chain[1]).toEqual({ provider: "lab-gateway", model: "qwen-example", reasoningEffort: "max" });
     expect("modelCatalog" in cfg).toBe(false);
     expect("temperature" in cfg.chain[0]).toBe(false);
   });

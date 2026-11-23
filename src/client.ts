@@ -48,6 +48,19 @@ moduleLoaderWindow.__ModuleLoader__!.load({
       background: color,
       marginLeft: 6,
     });
+    /** Neutral outline badge: readable in both themes, unlike a layer fill
+     *  paired with the base text color (dark-on-dark in the dark theme). */
+    const subtleBadgeStyle: React.CSSProperties = {
+      display: "inline-block",
+      padding: "0 8px",
+      borderRadius: R.sm,
+      fontSize: 11,
+      lineHeight: "18px",
+      border: "1px solid var(--dsw-alias-border-l2)",
+      color: "var(--dsw-alias-label-secondary)",
+      background: "transparent",
+      marginLeft: 6,
+    };
     const smallStyle: React.CSSProperties = { fontSize: 12, opacity: 0.75 };
     const warnStyle: React.CSSProperties = { fontSize: 12, color: "var(--dsw-alias-state-warn-primary)" };
     const errorStyle: React.CSSProperties = { fontSize: 12, color: "var(--dsw-alias-state-error-primary)" };
@@ -182,6 +195,114 @@ moduleLoaderWindow.__ModuleLoader__!.load({
         open ? h("div", { style: { whiteSpace: "pre-wrap", ...smallStyle, marginTop: 4 } }, children) : null);
     }
 
+    // ---------- conservative Markdown rendering ----------
+    // The host's MarkdownText primitive lives in an internal package that is
+    // inlined into the shell bundles and not reachable from a plugin bundle,
+    // so advisor answers are rendered here: paragraphs, bold, inline code,
+    // bullet / numbered lists, headings, fenced code. Output is React nodes
+    // (never innerHTML), so model text cannot inject markup.
+    const codeFont = "var(--dsw-font-markdown-code-block-small, ui-monospace, Consolas, monospace)";
+    const inlineCodeStyle: React.CSSProperties = { fontFamily: codeFont, fontSize: 12, background: "var(--dsw-alias-markdown-code-block)", padding: "0 4px", borderRadius: 4 };
+    const preStyle: React.CSSProperties = { margin: "8px 0", padding: "8px 10px", borderRadius: R.sm, background: "var(--dsw-alias-markdown-code-block)", overflowX: "auto", fontSize: 12, lineHeight: 1.5 };
+    const paraStyle: React.CSSProperties = { whiteSpace: "pre-wrap", marginTop: 6 };
+    const listStyle: React.CSSProperties = { margin: "6px 0", paddingLeft: 20 };
+
+    function inlineSpans(text: string, keyPrefix: string): React.ReactNode[] {
+      const parts: React.ReactNode[] = [];
+      const re = /(\*\*[^*\n]+?\*\*|`[^`\n]+`)/g;
+      let last = 0;
+      let i = 0;
+      let match: RegExpExecArray | null;
+      while ((match = re.exec(text)) !== null) {
+        if (match.index > last) parts.push(text.slice(last, match.index));
+        const token = match[0];
+        if (token.startsWith("**")) parts.push(h("strong", { key: `${keyPrefix}-b${i++}` }, token.slice(2, -2)));
+        else parts.push(h("code", { key: `${keyPrefix}-c${i++}`, style: inlineCodeStyle }, token.slice(1, -1)));
+        last = match.index + token.length;
+      }
+      if (last < text.length) parts.push(text.slice(last));
+      return parts;
+    }
+
+    function renderMarkdown(text: string): React.ReactNode[] {
+      const lines = text.replace(/\r\n/g, "\n").split("\n");
+      const out: React.ReactNode[] = [];
+      let para: string[] = [];
+      let list: string[] | null = null;
+      let ordered = false;
+      let code: string[] | null = null;
+      let k = 0;
+      const flushPara = () => {
+        if (!para.length) return;
+        const key = k++;
+        out.push(h("div", { key, style: paraStyle }, inlineSpans(para.join("\n"), `p${key}`)));
+        para = [];
+      };
+      const flushList = () => {
+        if (!list) return;
+        const key = k++;
+        const items = list;
+        out.push(h(ordered ? "ol" : "ul", { key, style: listStyle }, items.map((item, idx) => h("li", { key: idx, style: { whiteSpace: "pre-wrap", marginBottom: 2 } }, inlineSpans(item, `l${key}-${idx}`)))));
+        list = null;
+      };
+      const flushCode = () => {
+        if (!code) return;
+        const key = k++;
+        out.push(h("pre", { key, style: preStyle }, h("code", { style: { fontFamily: codeFont } }, code.join("\n"))));
+        code = null;
+      };
+      for (const raw of lines) {
+        if (code) {
+          if (/^\s*```\s*$/.test(raw)) flushCode();
+          else code.push(raw);
+          continue;
+        }
+        const line = raw.trimEnd();
+        if (/^\s*```/.test(line)) {
+          flushPara();
+          flushList();
+          code = [];
+          continue;
+        }
+        const heading = /^(#{1,6})\s+(.*)$/.exec(line.trim());
+        if (heading) {
+          flushPara();
+          flushList();
+          const level = heading[1].length;
+          const key = k++;
+          out.push(h("div", { key, style: { fontWeight: 600, fontSize: level <= 2 ? 15 : 13.5, marginTop: 10, marginBottom: 2 } }, inlineSpans(heading[2], `h${key}`)));
+          continue;
+        }
+        if (!line.trim()) {
+          flushPara();
+          flushList();
+          continue;
+        }
+        const bullet = /^\s*[-*•]\s+(.*)$/.exec(raw);
+        const numbered = /^\s*\d+[.)]\s+(.*)$/.exec(raw);
+        if (bullet || numbered) {
+          flushPara();
+          const isOrdered = !!numbered;
+          if (!list || ordered !== isOrdered) {
+            flushList();
+            list = [];
+            ordered = isOrdered;
+          }
+          list.push((bullet ?? numbered)![1]);
+          continue;
+        }
+        if (list) {
+          list[list.length - 1] += `\n${line}`;
+          continue;
+        }
+        para.push(line);
+      }
+      flushCode();
+      flushList();
+      flushPara();
+      return out;
+    }
+
     function LegacyAdvisorCardView(props: { node?: { data?: LegacyCardState } }) {
       const data = props.node?.data;
       const [contextOpen, setContextOpen] = useState(false);
@@ -195,7 +316,7 @@ moduleLoaderWindow.__ModuleLoader__!.load({
       return h("div", { style: cardStyle },
         h("div", null,
           h("span", { style: labelStyle }, "Second Opinion 咨询"),
-          h("span", { style: badgeStyle("var(--dsw-alias-bg-layer-2)") }, "旧版记录"),
+          h("span", { style: subtleBadgeStyle }, "旧版记录"),
           h("span", { style: statusBadge }, statusText),
           messages.map((m) => h("span", { key: m.attemptIndex, style: badgeStyle("var(--dsw-alias-brand-primary)") }, m.model)),
           data.truncated ? h("span", { style: badgeStyle("var(--dsw-alias-state-warn-primary)") }, "已截断") : null),
@@ -208,11 +329,11 @@ moduleLoaderWindow.__ModuleLoader__!.load({
           ? h("div", { style: { display: "flex", gap: 12, flexWrap: "wrap", marginTop: 6 } },
               messages.map((m) => h("div", { key: m.attemptIndex, style: { flex: "1 1 240px", minWidth: 240, border: "1px solid var(--dsw-alias-border-l1)", borderRadius: R.lg, padding: "6px 8px" } },
                 h("div", { style: { ...smallStyle, marginBottom: 4 } }, m.label || m.model),
-                h("div", { style: { whiteSpace: "pre-wrap" } }, m.content))))
+                h("div", null, renderMarkdown(m.content)))))
           : running ? h("div", { style: { whiteSpace: "pre-wrap", marginTop: 6 } }, data.liveContent ? data.liveContent + "▍" : `正在咨询 ${data.chain?.[data.currentAttempt]?.label ?? ""} …`) : null,
         followUps.map((f, i) => h("div", { key: i, style: { marginTop: 10, paddingTop: 8, borderTop: "0.5px solid var(--dsw-alias-border-l1)" } },
           h("div", { style: { fontWeight: 600, ...smallStyle } }, `追问 ${i + 1}：${f.text}`),
-          h("div", { style: { whiteSpace: "pre-wrap", marginTop: 4 } }, f.answer ?? "思考中…"))),
+          h("div", null, f.answer === undefined ? h("span", { style: smallStyle }, "思考中…") : renderMarkdown(f.answer)))),
         data.attempts?.length ? h("div", { style: { marginTop: 8, ...smallStyle } },
           "尝试记录：",
           data.attempts.map((attempt, i) => h("span", { key: i }, i > 0 ? " → " : "", attempt.ok ? "✓" : "✗", attempt.label, attempt.ok || !attempt.error ? "" : `（${attempt.error}）`))) : null);
@@ -320,7 +441,7 @@ moduleLoaderWindow.__ModuleLoader__!.load({
         h("div", { style: { display: "flex", alignItems: "center", flexWrap: "wrap", gap: 4 } },
           h("span", { style: labelStyle }, title),
           h("span", { style: statusBadge }, statusText),
-          mode ? h("span", { style: badgeStyle("var(--dsw-alias-bg-layer-2)") }, mode === "standalone" ? "盲审" : "继承") : null,
+          mode ? h("span", { style: subtleBadgeStyle }, mode === "standalone" ? "盲审" : "继承") : null,
           models.map((m, i) => h("span", { key: i, style: badgeStyle("var(--dsw-alias-brand-primary)") }, m)),
           truncated ? h("span", { style: badgeStyle("var(--dsw-alias-state-warn-primary)") }, "已截断") : null),
         question ? h("div", { style: { fontWeight: 600, margin: "6px 0 2px" } }, question) : null,
@@ -332,7 +453,7 @@ moduleLoaderWindow.__ModuleLoader__!.load({
           "尝试记录：",
           attempts.map((a, i) => h("span", { key: i, style: a.ok ? okStyle : errorStyle }, i > 0 ? " → " : "", a.ok ? "✓ " : "✗ ", a.label, !a.ok && a.reason ? `（${a.reason.length > 300 ? a.reason.slice(0, 300) + "…" : a.reason}）` : ""))) : null,
         (meta?.notes ?? []).length ? h("ul", { style: { ...warnStyle, margin: "6px 0 0", paddingLeft: 18 } }, meta!.notes!.map((n, i) => h("li", { key: i }, n))) : null,
-        !running && text ? h("div", { style: { whiteSpace: "pre-wrap", marginTop: 8 } }, text) : null,
+        !running && text ? h("div", { style: { marginTop: 2 } }, renderMarkdown(text)) : null,
         !running && !text && block?.error ? h("div", { style: errorStyle }, block.error.reason ?? block.error.code ?? block.error.name ?? "工具调用失败") : null);
     }
 

@@ -66,13 +66,22 @@ export function attachObservation(child: Agent, now: () => number = Date.now): C
     disposers.push(() => void off());
   };
 
-  // Waterfall listener: returning undefined leaves the failure terminal, which
-  // is what the child's own retry policy has already decided.
-  listen("agent/request-error", (payload) => {
+  // `agent/request-error` is a WATERFALL: a listener that does not call
+  // `next()` vetoes the rest of the chain (the retry plugin relies on it).
+  // Delegate first, then record the failure only when the settled action is
+  // terminal — a failure that some listener recovered from is not a reason.
+  listen("agent/request-error", (payload: unknown, next: () => Promise<unknown>) => {
     const p = payload as { agent?: Agent; failure?: LlmFailure };
-    if (p.agent && p.agent !== child) return undefined;
-    if (p.failure) obs.failures.push(p.failure);
-    return undefined;
+    const mine = !p.agent || p.agent === child;
+    return Promise.resolve(next()).then(
+      (action) => {
+        if (mine && p.failure && action === undefined) obs.failures.push(p.failure);
+        return action;
+      },
+      (error) => {
+        throw error;
+      },
+    );
   });
   listen("agent/assistant-stream", (payload) => {
     const p = payload as { agent?: Agent; frame?: { type?: string; chunk?: { type?: string; text?: string } } };

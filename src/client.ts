@@ -18,7 +18,7 @@ moduleLoaderWindow.__ModuleLoader__!.load({
     const h = React.createElement;
     const useState = React.useState;
     const useEffect = React.useEffect;
-    const useRef = (React as { useRef?: <T>(v: T) => { current: T } }).useRef ?? (<T>(v: T) => ({ current: v }));
+    const useRef = React.useRef;
 
     // ---------- shared styles (theme tokens with literal fallbacks) ----------
     // Radii follow the DSH radius scale: controls R12 (--dsw-radius-md),
@@ -237,8 +237,10 @@ moduleLoaderWindow.__ModuleLoader__!.load({
       kind?: string;
       phase?: "preparing" | "start" | "result";
       name?: string;
+      /** `PartialArguments`: a method-style reader over possibly incomplete streamed args. */
       args?: unknown;
       argsRaw?: string;
+      call?: { argsRaw?: string } | null;
       content?: Array<{ type?: string; text?: string }>;
       isError?: boolean;
       error?: { name?: string; code?: string; reason?: string };
@@ -250,12 +252,35 @@ moduleLoaderWindow.__ModuleLoader__!.load({
       toolName?: string;
     }
 
-    function argsOf(block: ToolBlock | undefined): { question?: string; context?: string; mode?: string; follow_up?: string; consult_id?: string; dual_opinions?: boolean } {
-      const a = block?.args;
-      if (a && typeof a === "object") return a as ReturnType<typeof argsOf>;
-      if (typeof block?.argsRaw === "string") {
+    interface ToolArgsLike {
+      question?: string;
+      context?: string;
+      mode?: string;
+      follow_up?: string;
+      consult_id?: string;
+      dual_opinions?: boolean;
+    }
+
+    /** Read the call's arguments from the host's `PartialArguments` reader
+     *  (`text(key)` / `value(key)`), falling back to the raw JSON when the
+     *  reader is unavailable (malformed or older blocks). */
+    function argsOf(block: ToolBlock | undefined): ToolArgsLike {
+      const a = block?.args as { text?: (key: string) => string | undefined; value?: (key: string) => unknown } | undefined;
+      if (a && typeof a.text === "function") {
+        const text = (key: keyof ToolArgsLike) => (a.text as (k: string) => string | undefined)(key) || undefined;
+        return {
+          question: text("question"),
+          context: text("context"),
+          mode: text("mode"),
+          follow_up: text("follow_up"),
+          consult_id: text("consult_id"),
+          dual_opinions: typeof a.value === "function" ? a.value("dual_opinions") === true : undefined,
+        };
+      }
+      const raw = typeof block?.argsRaw === "string" ? block.argsRaw : typeof block?.call?.argsRaw === "string" ? block.call.argsRaw : undefined;
+      if (typeof raw === "string" && raw.trim()) {
         try {
-          return JSON.parse(block.argsRaw) as ReturnType<typeof argsOf>;
+          return JSON.parse(raw) as ToolArgsLike;
         } catch {
           return {};
         }
@@ -278,7 +303,7 @@ moduleLoaderWindow.__ModuleLoader__!.load({
       const running = props.phase !== "result" && block?.kind !== "tool-result";
       const args = argsOf(block);
       const meta = metaOf(block);
-      const question = meta?.question ?? args.question ?? args.follow_up ?? "";
+      const question = meta?.question ?? meta?.followUp ?? args.question ?? args.follow_up ?? "";
       const context = meta?.context ?? args.context;
       const attempts = meta?.attempts ?? [];
       const okCount = attempts.filter((a) => a.ok).length;
@@ -288,12 +313,14 @@ moduleLoaderWindow.__ModuleLoader__!.load({
       const statusText = running ? "咨询中…" : failed ? "失败" : "完成";
       const models = (meta?.model ?? "").split(" + ").filter(Boolean);
       const text = contentText(block);
-      const title = args.consult_id && !args.question ? (meta?.round ? `追问 ${meta.round}` : "追问") : "Second Opinion 咨询";
+      const isFollowUp = (meta?.round ?? 0) >= 1 || (!!args.consult_id && !args.question);
+      const title = isFollowUp ? (meta?.round ? `追问 ${meta.round}` : "追问") : "Second Opinion 咨询";
+      const mode = meta?.mode ?? args.mode;
       return h("div", { style: cardStyle, "data-dsh-advisor": "card" },
         h("div", { style: { display: "flex", alignItems: "center", flexWrap: "wrap", gap: 4 } },
           h("span", { style: labelStyle }, title),
           h("span", { style: statusBadge }, statusText),
-          meta?.mode ? h("span", { style: badgeStyle("var(--dsw-alias-bg-layer-2)") }, meta.mode === "standalone" ? "盲审" : "继承") : null,
+          mode ? h("span", { style: badgeStyle("var(--dsw-alias-bg-layer-2)") }, mode === "standalone" ? "盲审" : "继承") : null,
           models.map((m, i) => h("span", { key: i, style: badgeStyle("var(--dsw-alias-brand-primary)") }, m)),
           truncated ? h("span", { style: badgeStyle("var(--dsw-alias-state-warn-primary)") }, "已截断") : null),
         question ? h("div", { style: { fontWeight: 600, margin: "6px 0 2px" } }, question) : null,
@@ -334,16 +361,22 @@ moduleLoaderWindow.__ModuleLoader__!.load({
     interface RemoteLike {
       settings: {
         describe: () => Promise<RemoteEnvelope<NamespaceDescribe>>;
+        /** Patch-merge with optimistic revision; the host replaces arrays wholesale. */
         update: (ns: string, patch: unknown, expectedRevision?: number) => Promise<RemoteEnvelope<NamespaceView>>;
       };
       llm: {
         listProviders: () => Promise<RemoteEnvelope<Array<{ id: string; name: string }>>>;
+        /** Provider → settings namespace that configures it (needed for discovery). */
+        listConfigurableProviders: () => Promise<RemoteEnvelope<Array<{ provider: string; settingsNs: string }>>>;
+        /** Official model discovery for a provider (the 模型 page's own source). */
+        discoverModels: (settingsNs: string, request: { provider?: string }) => Promise<RemoteEnvelope<Array<{ id: string; name?: string }>>>;
       };
     }
-    interface RemoteEnvelope<T> { ok: boolean; value?: T; error?: { message?: string } }
+    interface RemoteEnvelope<T> { ok: boolean; value?: T; error?: { message?: string; code?: string } }
     function unwrap<T>(response: RemoteEnvelope<T> | undefined, what: string): T {
       if (response && response.ok && response.value !== undefined) return response.value;
-      throw new Error(`${what}失败：${response?.error?.message ?? "远程调用返回异常"}`);
+      const detail = response?.error?.code ? `${response.error.code}：${response.error.message ?? ""}` : response?.error?.message ?? "远程调用返回异常";
+      throw new Error(`${what}失败：${detail}`);
     }
     function getRemote(ctx: unknown): RemoteLike | undefined {
       const candidate = ctx as { remote?: RemoteLike; get?: (key: string) => unknown };
@@ -357,50 +390,81 @@ moduleLoaderWindow.__ModuleLoader__!.load({
     const REPO_URL = "https://github.com/yyty947/dsh-advisor-chain";
     const UPGRADE_NOTES_URL = `${REPO_URL}#升级须知`;
 
-    interface ModelInfo { id: string; name?: string; efforts?: string[] }
+    interface ModelInfo { id: string; name?: string; efforts?: string[]; discovered?: boolean }
     interface ProviderInfo { models: ModelInfo[]; builtin: boolean }
+
+    function effortsOf(raw: unknown): string[] | undefined {
+      if (Array.isArray(raw)) return raw.map(String);
+      if (raw && typeof raw === "object") return Object.keys(raw as object);
+      return undefined;
+    }
 
     /** Models (and declared reasoning efforts) a provider has in DSH's own
      *  settings — the 模型 page writes them; no network involved. Shapes differ:
-     *  llm-pi-ai keeps `providers[route].models[]` (with optional
-     *  `reasoningEfforts` per model), DeepSeek routes keep a `models` catalog
-     *  plus optional `modelOverrides`. */
+     *  - llm-pi-ai: `providers[route].models[]` with per-model `reasoningEfforts`,
+     *    plus `providers[route].modelOverrides[modelId]` for corrections;
+     *  - DeepSeek routes (api-key): a `models` catalog in their own namespace
+     *    with top-level `modelOverrides[modelId]`;
+     *  - DeepSeek account: NO catalog in settings (the account service lists
+     *    models) — only overrides may be present. Callers fall back to
+     *    `discoverModels` for such providers.
+     *  Built-in DeepSeek models advertise off/low/high/max through the adapter. */
     function providerModels(namespaces: NamespaceView[], provider: string): ProviderInfo {
       const out: ProviderInfo = { models: [], builtin: false };
+      const byId = new Map<string, ModelInfo>();
       const register = (m: unknown) => {
         const id = typeof m === "string" ? m : (m as { id?: unknown } | null)?.id;
-        if (typeof id !== "string" || !id || out.models.some((x) => x.id === id)) return;
-        const effortsRaw = (m as { reasoningEfforts?: unknown } | null)?.reasoningEfforts;
-        const efforts = Array.isArray(effortsRaw) ? effortsRaw.map(String) : effortsRaw && typeof effortsRaw === "object" ? Object.keys(effortsRaw) : undefined;
-        out.models.push({ id, name: typeof (m as { name?: unknown })?.name === "string" ? (m as { name: string }).name : undefined, efforts: efforts && efforts.length ? efforts : undefined });
+        if (typeof id !== "string" || !id || byId.has(id)) return;
+        const entry: ModelInfo = { id, name: typeof (m as { name?: unknown })?.name === "string" ? (m as { name: string }).name : undefined, efforts: undefined };
+        const efforts = effortsOf((m as { reasoningEfforts?: unknown } | null)?.reasoningEfforts);
+        if (efforts && efforts.length) entry.efforts = efforts;
+        byId.set(id, entry);
       };
+      const applyOverride = (id: string, o: unknown) => {
+        const entry = byId.get(id);
+        if (!entry || !o || typeof o !== "object") return;
+        const raw = (o as { reasoningEfforts?: unknown }).reasoningEfforts;
+        if (raw === false) entry.efforts = undefined;
+        else {
+          const efforts = effortsOf(raw);
+          if (efforts) entry.efforts = efforts;
+        }
+      };
+      const isDeepSeekNs = (ns: string) => /deepseek/i.test(ns);
+      const isDeepSeekRoute = /deepseek/i.test(provider);
       for (const section of namespaces ?? []) {
         const value = section.value as Record<string, unknown> | undefined;
-        if (!value) continue;
-        const providers = value.providers as Record<string, { models?: unknown[] }> | undefined;
-        if (providers && typeof providers === "object" && providers[provider]) {
-          if (Array.isArray(providers[provider].models)) providers[provider].models.forEach(register);
+        if (!value || typeof value !== "object") continue;
+        const route = (value.providers as Record<string, { models?: unknown; modelOverrides?: unknown }> | undefined)?.[provider];
+        if (route && typeof route === "object") {
+          if (Array.isArray(route.models)) route.models.forEach(register);
+          if (route.modelOverrides && typeof route.modelOverrides === "object") {
+            for (const [id, o] of Object.entries(route.modelOverrides as Record<string, unknown>)) applyOverride(id, o);
+          }
         }
-        const overrides = value.modelOverrides as Record<string, { reasoningEfforts?: unknown }> | undefined;
-        if (Array.isArray(value.models) && Object.keys(providers ?? {}).length === 0) {
-          // DeepSeek-style catalog: it belongs to this provider only when the
-          // namespace is that provider's own (deepseek-official/-account).
-          if (/deepseek/.test(section.ns) && /deepseek/.test(provider)) {
+        if (isDeepSeekNs(section.ns) && isDeepSeekRoute) {
+          if (Array.isArray(value.models)) {
             out.builtin = true;
             value.models.forEach(register);
           }
-        }
-        if (overrides && overrides[provider]) {
-          const o = overrides[provider];
-          if (o.reasoningEfforts === false) out.models.forEach((m) => (m.efforts = undefined));
-          else if (Array.isArray(o.reasoningEfforts)) out.models.forEach((m) => (m.efforts = (o.reasoningEfforts as unknown[]).map(String)));
+          if (value.modelOverrides && typeof value.modelOverrides === "object") {
+            out.builtin = true;
+            for (const [id, o] of Object.entries(value.modelOverrides as Record<string, unknown>)) applyOverride(id, o);
+          }
         }
       }
-      if (out.builtin) out.models.forEach((m) => { if (!m.efforts) m.efforts = [...BUILTIN_DEEPSEEK_EFFORTS]; });
+      if (out.builtin) {
+        for (const m of byId.values()) if (!m.efforts) m.efforts = [...BUILTIN_DEEPSEEK_EFFORTS];
+        out.builtin = true;
+      } else if (/deepseek/i.test(provider)) {
+        // Account route without a catalog: models come from discovery, efforts from the adapter.
+        out.builtin = true;
+      }
+      out.models = [...byId.values()];
       return out;
     }
 
-    type EntryStatus = { kind: "ok" | "provider-missing" | "model-unknown" | "unauthorized" | "selection-off" | "effort-undeclared"; text: string };
+    type EntryStatus = { kind: "ok" | "provider-missing" | "model-unknown" | "catalog-unknown" | "unauthorized" | "selection-off" | "effort-undeclared"; text: string };
 
     function AdvisorSettingsTab() {
       const [draft, setDraft] = useState<DraftConfig | null>(null);
@@ -410,6 +474,13 @@ moduleLoaderWindow.__ModuleLoader__!.load({
       const [providers, setProviders] = useState<Array<{ id: string; name: string }>>([]);
       const [allow, setAllow] = useState<{ enabled: boolean; routes: Array<{ provider: string; model: string }>; revision: number; present: boolean }>({ enabled: false, routes: [], revision: 0, present: false });
       const [authWritable, setAuthWritable] = useState(true);
+      /** Models discovered through the official `discoverModels` remote, per provider
+       *  (for routes whose models live outside the settings document, e.g. a
+       *  signed-in DeepSeek account). */
+      const [discovered, setDiscovered] = useState<Record<string, string[]>>({});
+      /** True when the stored config still carries keys only 0.3.9 wrote — the
+       *  signal that this installation has sessions with legacy `advisor/*` events. */
+      const [legacyUser, setLegacyUser] = useState(false);
       const [busy, setBusy] = useState<string | null>(null);
       const [saving, setSaving] = useState(false);
       const [msg, setMsg] = useState("");
@@ -485,6 +556,11 @@ moduleLoaderWindow.__ModuleLoader__!.load({
           setDraft(next);
           setRevision(ns.revision);
           setSavedSnapshot(JSON.stringify(next));
+          const raw = ns.value as Record<string, unknown>;
+          setLegacyUser(
+            Object.prototype.hasOwnProperty.call(raw, "modelCatalog") ||
+              (Array.isArray(raw.chain) && raw.chain.some((e) => e && typeof e === "object" && "temperature" in (e as object))),
+          );
           const provs = await remote.llm.listProviders().catch(() => undefined);
           setProviders(provs && provs.ok && Array.isArray(provs.value) ? provs.value : []);
         } catch (e) {
@@ -509,20 +585,52 @@ moduleLoaderWindow.__ModuleLoader__!.load({
         });
       const addEntry = () => setDraft((d) => (d ? { ...d, chain: [...d.chain, { label: "", provider: providers[0]?.id ?? "", model: "" }] } : d));
       // Changing the provider invalidates the model and the effort.
-      const patchProvider = (index: number, provider: string) => patchEntry(index, { provider, model: "", reasoningEffort: undefined });
+      // Changing the provider invalidates the model and the effort; when the
+      // settings document holds no catalog for it, fetch the list the way the
+      // 模型 page does.
+      const patchProvider = (index: number, provider: string) => {
+        patchEntry(index, { provider, model: "", reasoningEffort: undefined });
+        if (provider && providerModels(allNamespaces, provider).models.length === 0) void discover(provider);
+      };
+
+      const discover = async (provider: string) => {
+        if (!provider) return;
+        setBusy(`discover:${provider}`);
+        setMsg("");
+        setError("");
+        try {
+          const remote = getRemote(currentCtx)!;
+          const confs = await remote.llm.listConfigurableProviders().catch(() => undefined);
+          const settingsNs = confs && confs.ok && Array.isArray(confs.value) ? confs.value.find((c) => c.provider === provider)?.settingsNs : undefined;
+          const found = settingsNs ? unwrap(await remote.llm.discoverModels(settingsNs, { provider }), "获取模型列表") : [];
+          setDiscovered((d) => ({ ...d, [provider]: found.map((m) => m.id) }));
+          setMsg(found.length ? `已获取「${provider}」的 ${found.length} 个模型，可在下拉中选择。` : `没有取到「${provider}」的模型列表：该供应商可能需要先在 设置 → 模型 里登录或配置。`);
+        } catch (e) {
+          setError(`获取模型列表失败：${e instanceof Error ? e.message : String(e)}`);
+        } finally {
+          setBusy(null);
+        }
+      };
+
+      /** Everything the model dropdown may offer for a provider right now. */
+      const catalogOf = (provider: string): ModelInfo[] => {
+        const info = providerModels(allNamespaces, provider);
+        const extra = (discovered[provider] ?? []).filter((id) => !info.models.some((m) => m.id === id)).map((id) => ({ id, efforts: info.builtin ? [...BUILTIN_DEEPSEEK_EFFORTS] : undefined, discovered: true }));
+        return [...info.models, ...extra];
+      };
 
       const statusOf = (entry: DraftChainEntry): EntryStatus => {
         if (!entry.provider) return { kind: "provider-missing", text: "请选择供应商。" };
         if (providers.length > 0 && !providers.some((p) => p.id === entry.provider)) {
           return { kind: "provider-missing", text: `DSH 里没有叫「${entry.provider}」的供应商。请到 设置 → 模型 检查或重新添加，然后回来改选。` };
         }
-        const info = providerModels(allNamespaces, entry.provider);
+        const catalog = catalogOf(entry.provider);
         if (!entry.model) return { kind: "model-unknown", text: "请选择模型。" };
-        if (info.models.length > 0 && !info.models.some((m) => m.id === entry.model)) {
-          return { kind: "model-unknown", text: `模型「${entry.model}」不在 DSH 模型页的配置里。请到 设置 → 模型 添加，或在这里改选。` };
+        if (catalog.length > 0 && !catalog.some((m) => m.id === entry.model)) {
+          return { kind: "model-unknown", text: `模型「${entry.model}」不在该供应商的模型列表里。请到 设置 → 模型 添加，或在这里改选。` };
         }
-        if (info.models.length === 0 && !info.builtin) {
-          return { kind: "model-unknown", text: `供应商「${entry.provider}」在 DSH 模型页还没有配置模型。请到 设置 → 模型 添加后刷新本页。` };
+        if (catalog.length === 0) {
+          return { kind: "catalog-unknown", text: `未取到「${entry.provider}」的模型列表（登录型账号的模型不在配置文件里）。已填写的模型会在调用时校验；也可以点「获取模型列表」再试。` };
         }
         if (!allow.present) return { kind: "ok", text: "当前 DSH 组合没有子代理模型白名单，可直接使用。" };
         if (!allow.enabled) {
@@ -533,7 +641,7 @@ moduleLoaderWindow.__ModuleLoader__!.load({
           return { kind: "unauthorized", text: `这个模型还没授权给子代理。点「授权」即可——会把「${entry.provider} / ${entry.model}」写进 DSH 的子代理模型白名单${p?.name ? `（${p.name}）` : ""}。` };
         }
         if (entry.reasoningEffort) {
-          const declared = info.models.find((m) => m.id === entry.model)?.efforts ?? [];
+          const declared = catalog.find((m) => m.id === entry.model)?.efforts ?? [];
           if (declared.length === 0) {
             return { kind: "effort-undeclared", text: `模型 ${entry.model} 没有声明推理等级，档位「${entry.reasoningEffort}」会被忽略。到 设置 → 模型 → 编辑该供应商 → 自定义设置 → 模型选项 → 推理等级 开启，或把档位留空。` };
           }
@@ -564,20 +672,28 @@ moduleLoaderWindow.__ModuleLoader__!.load({
           setMsg(`已授权 ${entries.length} 个模型给子代理（DSH 的子代理模型选择已${current?.enabled ? "保持开启" : "开启"}）。`);
         } catch (e) {
           const message = e instanceof Error ? e.message : String(e);
-          if (/conflict|stale/i.test(message)) { await reload({ silent: true }); setMsg("设置刚被别处修改，已重新加载；请再点一次「授权」。"); }
+          if (/conflict|stale|changed since it was read|revision/i.test(message)) { await reload({ silent: true }); setMsg("设置刚被别处修改，已重新加载；请再点一次「授权」。"); }
           else { setAuthWritable(false); setError(`自动授权失败：${message}。请到 设置 → 插件 → 子代理 手动开启模型选择并添加模型。`); }
         } finally { setBusy(null); }
       };
 
       const dismissLegacyNotice = async () => {
+        // Only the flag is persisted — never the (possibly half-edited) draft.
         patch({ legacyNoticeDismissed: true });
         try {
           const remote = getRemote(currentCtx)!;
           const ns = (await remote.settings.describe()).value?.namespaces.find((n) => n.ns === NS);
-          const next = { ...(draft ?? {}), legacyNoticeDismissed: true };
-          await remote.settings.update(NS, next, ns?.revision ?? revision);
-          setRevision((ns?.revision ?? revision) + 1);
-          setSavedSnapshot(JSON.stringify(next));
+          const view = unwrap(await remote.settings.update(NS, { legacyNoticeDismissed: true }, ns?.revision ?? revision), "记录提醒状态");
+          setRevision(view.revision);
+          // The flag is now saved; keep other unsaved edits visibly unsaved.
+          setSavedSnapshot((snap) => {
+            try {
+              const parsed = JSON.parse(snap) as DraftConfig;
+              return JSON.stringify({ ...parsed, legacyNoticeDismissed: true });
+            } catch {
+              return snap;
+            }
+          });
           setMsg("已记录，之后不再显示这条提醒。");
         } catch (e) { setError(`记录失败：${e instanceof Error ? e.message : String(e)}；本次关闭后下次仍会显示。`); }
       };
@@ -589,8 +705,10 @@ moduleLoaderWindow.__ModuleLoader__!.load({
           const remote = getRemote(currentCtx)!;
           const dropped = draft.chain.filter((e) => !e.provider || !e.model).length;
           const clamp = (v: number | undefined, lo: number, hi: number) => (v === undefined ? undefined : Math.min(hi, Math.max(lo, Math.round(v))));
-          // Only schema fields are written, so keys left by earlier releases
-          // (temperature, modelCatalog, …) are cleaned up on the first save.
+          // Only schema fields are written. The host MERGES patches: a rewritten
+          // `chain` array drops legacy entry keys (temperature), while top-level
+          // keys from earlier releases (modelCatalog) persist harmlessly and are
+          // ignored at runtime.
           const sanitized: DraftConfig = {
             enabled: draft.enabled,
             mode: draft.mode,
@@ -620,7 +738,7 @@ moduleLoaderWindow.__ModuleLoader__!.load({
           setMsg(`已保存并即时生效。${dropped > 0 ? ` 已忽略 ${dropped} 个未填供应商/模型的未完成条目。` : ""}`);
         } catch (e) {
           const message = e instanceof Error ? e.message : String(e);
-          if (/conflict|stale/i.test(message)) { await reload({ silent: true }); setMsg("检测到配置已被外部修改：已重新加载最新配置，未保存的修改已被替换，请重新调整后再保存。"); }
+          if (/conflict|stale|changed since it was read|revision/i.test(message)) { await reload({ silent: true }); setMsg("检测到配置已被外部修改：已重新加载最新配置，未保存的修改已被替换，请重新调整后再保存。"); }
           else setError(`保存失败：${message}`);
         } finally { setSaving(false); }
       };
@@ -633,7 +751,9 @@ moduleLoaderWindow.__ModuleLoader__!.load({
       }
 
       const dirty = savedSnapshot !== "" && JSON.stringify(draft) !== savedSnapshot;
-      const showLegacyNotice = draft.chain.length > 0 && !draft.legacyNoticeDismissed;
+      // Shown once, only to installations that actually carry 0.3.9 data — a
+      // fresh install must never see it.
+      const showLegacyNotice = legacyUser && !draft.legacyNoticeDismissed;
       const unauthorized = draft.chain.filter((e) => e.provider && e.model && ["unauthorized", "selection-off"].includes(statusOf(e).kind));
 
       const numRow = (title: string, desc: string, value: number, min: number, max: number, step: number, onChange: (v: number) => void, last = false) =>
@@ -642,13 +762,21 @@ moduleLoaderWindow.__ModuleLoader__!.load({
           h("input", { style: { ...SET.control, width: 110 }, type: "number", min, max, step, value, "aria-label": title, disabled: saving, onChange: (e: React.ChangeEvent<HTMLInputElement>) => onChange(Number(e.target.value)) }));
 
       const modelField = (index: number, entry: DraftChainEntry) => {
-        const info = providerModels(allNamespaces, entry.provider);
-        const options = [...info.models.map((m) => ({ value: m.id, label: m.name && m.name !== m.id ? `${m.id}（${m.name}）` : m.id })), ...(entry.model && !info.models.some((m) => m.id === entry.model) ? [{ value: entry.model, label: `${entry.model}（未在 DSH 模型页配置）` }] : [])];
+        const catalog = catalogOf(entry.provider);
+        const options = [
+          ...catalog.map((m) => ({ value: m.id, label: m.name && m.name !== m.id ? `${m.id}（${m.name}）` : m.id })),
+          ...(entry.model && !catalog.some((m) => m.id === entry.model) ? [{ value: entry.model, label: `${entry.model}（不在已获取的模型列表里）` }] : []),
+        ];
+        const fetching = busy === `discover:${entry.provider}`;
         return h(Field, { label: "模型" },
-          h(Dropdown, { width: "100%", ariaLabel: "模型", value: entry.model, options: options.length ? options : [{ value: "", label: info.models.length ? "请选择" : "该供应商在 DSH 模型页没有配置模型" }], onChange: (e: { target: { value: string } }) => patchEntry(index, { model: e.target.value, reasoningEffort: undefined }) }));
+          h("div", { style: { display: "flex", gap: 6, width: "100%" } },
+            h(Dropdown, { width: "100%", ariaLabel: "模型", value: entry.model, options: options.length ? options : [{ value: "", label: catalog.length ? "请选择" : "未取到模型列表" }], onChange: (e: { target: { value: string } }) => patchEntry(index, { model: e.target.value, reasoningEffort: undefined }) }),
+            catalog.length === 0
+              ? h("button", { style: { ...SET.btn, height: 32, whiteSpace: "nowrap", flexShrink: 0 }, type: "button", disabled: !entry.provider || busy !== null, onClick: () => void discover(entry.provider) }, fetching ? "获取中…" : "获取模型列表")
+              : null));
       };
       const effortField = (index: number, entry: DraftChainEntry) => {
-        const declared = providerModels(allNamespaces, entry.provider).models.find((m) => m.id === entry.model)?.efforts ?? [];
+        const declared = catalogOf(entry.provider).find((m) => m.id === entry.model)?.efforts ?? [];
         const options = [{ value: "", label: declared.length ? "默认（模型默认档位）" : "默认（该模型未声明推理等级）" }, ...declared.map((v) => ({ value: v, label: v })), ...(entry.reasoningEffort && !declared.includes(entry.reasoningEffort) ? [{ value: entry.reasoningEffort, label: `${entry.reasoningEffort}（未声明，会被忽略）` }] : [])];
         return h(Field, { label: "推理档位" }, h(Dropdown, { width: 180, ariaLabel: "推理档位", value: entry.reasoningEffort ?? "", options, onChange: (e: { target: { value: string } }) => patchEntry(index, { reasoningEffort: e.target.value || undefined }) }));
       };
@@ -658,7 +786,7 @@ moduleLoaderWindow.__ModuleLoader__!.load({
         return h("div", { key: index, style: SET.entry },
           h("div", { style: { display: "flex", alignItems: "center", gap: 8, marginBottom: 10 } },
             h("span", { style: { ...SET.desc, marginTop: 0, width: 22 } }, `#${index + 1}`),
-            h("span", { style: status.kind === "ok" ? okStyle : status.kind === "effort-undeclared" ? warnStyle : errorStyle }, status.kind === "ok" ? "✓ 可用" : status.kind === "provider-missing" ? "⚠ 供应商不存在" : status.kind === "model-unknown" ? "⚠ 模型未配置" : status.kind === "selection-off" ? "⚠ 子代理模型选择已关闭" : status.kind === "unauthorized" ? "⚠ 未授权" : "⚠ 档位未声明"),
+            h("span", { style: status.kind === "ok" ? okStyle : status.kind === "effort-undeclared" || status.kind === "catalog-unknown" ? warnStyle : errorStyle }, status.kind === "ok" ? "✓ 可用" : status.kind === "provider-missing" ? "⚠ 供应商不存在" : status.kind === "model-unknown" ? "⚠ 模型未配置" : status.kind === "catalog-unknown" ? "⚠ 未取到模型列表" : status.kind === "selection-off" ? "⚠ 子代理模型选择已关闭" : status.kind === "unauthorized" ? "⚠ 未授权" : "⚠ 档位未声明"),
             h("span", { style: { flex: 1 } }),
             status.kind === "unauthorized" && authWritable ? h("button", { style: SET.btn, type: "button", disabled: busy !== null, onClick: () => authorize([entry]) }, "授权") : null,
             status.kind === "selection-off" && authWritable ? h("button", { style: SET.btn, type: "button", disabled: busy !== null, onClick: () => authorize([entry]) }, "开启并授权") : null,
@@ -673,7 +801,7 @@ moduleLoaderWindow.__ModuleLoader__!.load({
             effortField(index, entry),
             h(Field, { label: "maxTokens" }, h("input", { style: { ...SET.control, width: 120 }, type: "number", min: 1, value: entry.maxTokens ?? "", onChange: (e: React.ChangeEvent<HTMLInputElement>) => patchEntry(index, { maxTokens: e.target.value === "" ? undefined : Number(e.target.value) }) })),
             h(Field, { label: "超时（毫秒）" }, h("input", { style: { ...SET.control, width: 130 }, type: "number", min: 1000, max: 600000, step: 500, value: entry.timeoutMs ?? "", onChange: (e: React.ChangeEvent<HTMLInputElement>) => patchEntry(index, { timeoutMs: e.target.value === "" ? undefined : Number(e.target.value) }) }))),
-          status.kind !== "ok" ? h("div", { style: { ...smallStyle, ...(status.kind === "effort-undeclared" ? warnStyle : errorStyle), marginTop: 8 } }, status.text) : null);
+          status.kind !== "ok" ? h("div", { style: { ...smallStyle, ...(status.kind === "effort-undeclared" || status.kind === "catalog-unknown" ? warnStyle : errorStyle), marginTop: 8 } }, status.text) : null);
       };
 
       return h("li", { className: "dsh-advisor-chain-settings", style: { width: "100%", color: "var(--dsw-alias-label-primary)", fontFamily: "var(--dsw-font-family, inherit)", listStyle: "none", padding: 0, margin: 0, paddingBottom: dockHeight } },

@@ -6,12 +6,13 @@ import { ADVISOR_LABEL_PREFIX, AdvisorRegistry } from "../src/advisor/identify";
 import { attachObservation, type ChildObservation } from "../src/advisor/observe";
 import { beginFollowUp, threadFactsFromEvents } from "../src/advisor/followup";
 import { buildAdvisorPrompt } from "../src/advisor/preamble";
-import { assertRouteAllowed, resolveEntryOptions, startAdvisor } from "../src/advisor/start";
+import { assertRouteAllowed, parentRouteOf, resolveEntryOptions, startAdvisor } from "../src/advisor/start";
 import { classifySubagentError, describeFailures, settleOutcome, waitWithTimeout, type AbortReason } from "../src/advisor/result";
 import type { HostServices } from "../src/advisor/types";
 import { installLegacyShim } from "../src/legacy/shim";
 
-type Listener = (...args: never[]) => unknown;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type Listener = (...args: any[]) => unknown;
 
 function fakeHost(services: Record<string, unknown> = {}) {
   const listeners: Record<string, Listener[]> = {};
@@ -39,6 +40,7 @@ function fakeAgent(id: string, extra: Record<string, unknown> = {}): Agent {
   const ctxListeners: Record<string, Listener[]> = {};
   const agent = {
     id,
+    status: "idle",
     options: { provider: "p-parent", model: "m-parent" },
     session: { id, snapshotEvents: () => [] as never[], ...((extra.session as object) ?? {}) },
     ctx: {
@@ -48,7 +50,8 @@ function fakeAgent(id: string, extra: Record<string, unknown> = {}): Agent {
           ctxListeners[name] = (ctxListeners[name] ?? []).filter((l) => l !== listener);
         };
       },
-      emit: (name: string, ...args: unknown[]) => (ctxListeners[name] ?? []).forEach((l) => l(...(args as never[]))),
+      // Waterfall listeners get a `next` that delegates to an empty remainder.
+      emit: (name: string, ...args: unknown[]) => (ctxListeners[name] ?? []).forEach((l) => l(...(args as never[]), (() => Promise.resolve(undefined)) as never)),
     },
     ...extra,
   };
@@ -212,6 +215,14 @@ describe("AdvisorRegistry", () => {
     expect(registry.get("child-1")?.sandbox).toBe("failed");
   });
 
+  it("bounds memory: the oldest records are evicted, the newest stay reachable", () => {
+    const host = fakeHost();
+    const registry = new AdvisorRegistry({ host, sandbox: sandbox() });
+    for (let i = 0; i < 70; i++) registry.record({ childId: `c${i}`, parentSessionId: "p", consultId: `c${i}`, label: "l", provider: "p", model: "m" });
+    expect(registry.isAdvisor("c0")).toBe(false);
+    expect(registry.isAdvisor("c69")).toBe(true);
+  });
+
   it("trusts the session log over the (eventually consistent) projection", () => {
     const host = fakeHost();
     // The projection still reports the delegated mode right after the append;
@@ -246,7 +257,7 @@ describe("AdvisorRegistry", () => {
 });
 
 describe("attachObservation", () => {
-  it("tracks answer text vs tool calls and collects request failures", () => {
+  it("tracks answer text vs tool calls and collects request failures", async () => {
     const child = fakeAgent("c");
     const obs = attachObservation(child);
     const ctx = (child as unknown as { ctx: { emit: (n: string, ...a: unknown[]) => void } }).ctx;
@@ -259,8 +270,34 @@ describe("attachObservation", () => {
     expect(obs.answerTextStarted).toBe(false);
     expect(obs.toolCalls).toBe(1);
     ctx.emit("agent/request-error", { agent: child, failure: { code: "SERVER", message: "down" } });
+    await Promise.resolve();
     expect(obs.failures).toHaveLength(1);
     ctx.emit("agent/request-error", { agent: fakeAgent("other"), failure: { code: "SERVER", message: "not mine" } });
+    await Promise.resolve();
+    expect(obs.failures).toHaveLength(1);
+    obs.dispose();
+  });
+
+  it("delegates the request-error waterfall and records only terminal failures", async () => {
+    const listeners: Record<string, Listener> = {};
+    const child = {
+      id: "c",
+      session: { id: "c" },
+      ctx: { on: (name: string, l: Listener) => { listeners[name] = l; return () => true; } },
+    } as unknown as Agent;
+    const obs = attachObservation(child);
+    const listener = listeners["agent/request-error"];
+    // A downstream listener recovers (retry): our listener must pass the
+    // action through untouched and must NOT record the failure.
+    const recovered = await listener({ agent: child, failure: { code: "RATE_LIMIT", message: "slow" } }, () => Promise.resolve({ kind: "retry" }));
+    expect(recovered).toEqual({ kind: "retry" });
+    expect(obs.failures).toHaveLength(0);
+    // Terminal failure: recorded, and the (undefined) action is passed through.
+    const terminal = await listener({ agent: child, failure: { code: "AUTH", message: "bad key" } }, () => Promise.resolve(undefined));
+    expect(terminal).toBeUndefined();
+    expect(obs.failures).toEqual([{ code: "AUTH", message: "bad key" }]);
+    // Somebody else's agent: delegated, not recorded.
+    await listener({ agent: fakeAgent("other"), failure: { code: "AUTH", message: "x" } }, () => Promise.resolve(undefined));
     expect(obs.failures).toHaveLength(1);
     obs.dispose();
   });
@@ -268,6 +305,15 @@ describe("attachObservation", () => {
 
 describe("assertRouteAllowed", () => {
   const entry = { provider: "z-ai", model: "glm-5.4" };
+
+  it("reads the parent's route from the session request header before the agent options", () => {
+    const agent = fakeAgent("p", {
+      options: { provider: "old", model: "old-model" },
+      session: { requestHeader: () => ({ config: { provider: "z-ai", model: "glm-5.4" } }) },
+    });
+    expect(parentRouteOf(agent)).toEqual({ provider: "z-ai", model: "glm-5.4" });
+    expect(parentRouteOf(parent())).toEqual({ provider: "p-parent", model: "m-parent" });
+  });
 
   it("skips the check on a host without the allowlist service", () => {
     expect(assertRouteAllowed(fakeHost(), parent(), entry)).toEqual({ ok: true });
@@ -412,6 +458,23 @@ describe("follow-up validation", () => {
     const r2 = await beginFollowUp(host, registry, { parent: parent(), signal: new AbortController().signal, consultId: "child-1", followUp: "why?", maxRounds: 8 });
     expect(r2.ok).toBe(false);
     if (!r2.ok) expect(r2.message).toContain("另一个会话");
+  });
+
+  it("refuses a follow-up on a dual-opinion child and on a still-running advisor", async () => {
+    const host = fakeHost();
+    const registry = new AdvisorRegistry({ host, sandbox: sandboxFn(), descriptorOf: () => undefined });
+    registry.record({ childId: "dual-1", parentSessionId: "parent-1", consultId: "dual-1", label: `${ADVISOR_LABEL_PREFIX}dual`, provider: "p", model: "m", dual: true });
+    host.agents.get = vi.fn(() => fakeAgent("dual-1", { session: { snapshotEvents: () => descriptorEvents(`${ADVISOR_LABEL_PREFIX}dual`, 1) } }));
+    const dual = await beginFollowUp(host, registry, { parent: parent(), signal: new AbortController().signal, consultId: "dual-1", followUp: "why?", maxRounds: 8 });
+    expect(dual.ok).toBe(false);
+    if (!dual.ok) expect(dual.message).toContain("双意见");
+
+    registry.record({ childId: "busy-1", parentSessionId: "parent-1", consultId: "busy-1", label: `${ADVISOR_LABEL_PREFIX}x`, provider: "p", model: "m" });
+    host.agents.get = vi.fn(() => fakeAgent("busy-1", { status: "running", session: { snapshotEvents: () => descriptorEvents(`${ADVISOR_LABEL_PREFIX}x`, 1) } }));
+    const busy = await beginFollowUp(host, registry, { parent: parent(), signal: new AbortController().signal, consultId: "busy-1", followUp: "why?", maxRounds: 8 });
+    expect(busy.ok).toBe(false);
+    if (!busy.ok) expect(busy.message).toContain("仍在回答");
+    expect(host.subagents.sendMessage).not.toHaveBeenCalled();
   });
 });
 

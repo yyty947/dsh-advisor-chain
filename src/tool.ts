@@ -9,7 +9,7 @@ import { ADVISOR_LABEL_PREFIX, type AdvisorRegistry } from "./advisor/identify";
 import { buildAdvisorPrompt } from "./advisor/preamble";
 import { startAdvisor, type Refusal } from "./advisor/start";
 import { beginFollowUp, finishFollowUp } from "./advisor/followup";
-import { settleOutcome, waitWithTimeout, type AdvisorOutcome } from "./advisor/result";
+import { classifySubagentError, settleOutcome, waitWithTimeout, type AdvisorOutcome } from "./advisor/result";
 import { noopLogger, type HostServices, type Logger } from "./advisor/types";
 
 /** The JSON value type `presentationMeta` must return, without importing a transitive package. */
@@ -177,7 +177,10 @@ export function createSecondOpinionTool(deps: AdvisorDeps) {
           maxRounds: cfg.followup.maxRounds,
         });
         if (!begin.ok) return { ...fail(begin.message), consultId: args.consult_id };
-        const outcome = await finishFollowUp(deps.host, deps.registry, begin, { timeoutMs: cfg.limits.defaultTimeoutMs }, parent, exec.signal);
+        // The follow-up inherits the winning entry's timeout when it is still configured.
+        const record = deps.registry.get(args.consult_id);
+        const entryTimeout = record ? cfg.chain.find((e) => e.provider === record.provider && e.model === record.model)?.timeoutMs : undefined;
+        const outcome = await finishFollowUp(deps.host, deps.registry, begin, { timeoutMs: entryTimeout ?? cfg.limits.defaultTimeoutMs }, parent, exec.signal);
         const attempts: AttemptRecord[] = [{ label: "追问", ok: outcome.ok, ...(outcome.failure ? { reason: outcome.failure } : {}) }];
         if (!outcome.ok) return { advice: `顾问本轮未返回可用回答：${outcome.failure}。可换个问法追问或开新咨询。`, model: "", consultId: args.consult_id, dual: false, truncated: false, attempts, notes: [], round: begin.round };
         const notes = outcome.truncated ? ["本轮追问超时被中止，以上为已输出的部分回答"] : [];
@@ -213,8 +216,18 @@ export function createSecondOpinionTool(deps: AdvisorDeps) {
           const outcome = settleOutcome({ result: value, observation: deps.registry.observation(childId) ?? started.observation, abortedBy });
           if (outcome.ok && outcome.truncated) notes.push(`${label}：超时后按已输出内容截断`);
           return { ...outcome, childId };
+        } catch (error) {
+          // Caller cancellation is not a failure of this entry.
+          if (exec.signal.aborted) throw error;
+          // A rejected activation result (infrastructure fault) or a child that
+          // never settled: route it through the same classification table so the
+          // chain can fall through (model class) or stop with an actionable message.
+          const classified = classifySubagentError(error);
+          return { ok: false, kind: classified.kind, message: `顾问运行中断（${label}）：${classified.message}` };
         } finally {
           live.splice(live.indexOf(started.activation), 1);
+          // The streamed text was only a fallback for partial output; release it.
+          started.observation.text = "";
         }
       };
       const isRun = (r: RunResult): r is AdvisorOutcome & { childId: string } => !isRefusal(r);
@@ -254,6 +267,10 @@ export function createSecondOpinionTool(deps: AdvisorDeps) {
           }
           const failedNote = okCount < attempts.length ? "（注：部分顾问未返回可用内容，本次仅包含成功返回的意见。）" : "";
           const firstChild = results.filter(isRun).find((r) => r.ok)?.childId ?? "";
+          // Dual children are not follow-up-able; remember that on each record.
+          for (const r of results.filter(isRun)) {
+            if (r.ok) deps.registry.record({ childId: r.childId, parentSessionId: String(parent.id), consultId: r.childId, label: ADVISOR_LABEL_PREFIX + "dual", provider: "", model: "", dual: true });
+          }
           return { advice: sections.join("\n\n———\n\n") + failedNote, model: models.join(" + "), consultId: firstChild, dual: true, truncated: anyTruncated, attempts, notes };
         }
 

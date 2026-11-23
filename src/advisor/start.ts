@@ -19,9 +19,16 @@ interface AllowedRoutesService {
   allowedRoutes(): Array<{ provider: string; model: string }> | undefined;
 }
 
+/** The route the host itself uses when delegating: the session's current
+ *  request header, falling back to the agent's live options. */
 export function parentRouteOf(parent: Agent): { provider?: string; model?: string } {
+  const session = parent.session as { requestHeader?: () => { config?: { provider?: string; model?: string } } | undefined } | undefined;
+  const header = session?.requestHeader?.();
   const options = parent.options as AgentOptions | undefined;
-  return { provider: options?.provider, model: options?.model };
+  return {
+    provider: header?.config?.provider ?? options?.provider,
+    model: header?.config?.model ?? options?.model,
+  };
 }
 
 /**

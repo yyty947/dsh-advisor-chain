@@ -85,12 +85,17 @@ describe("second_opinion tool", () => {
     expect(rendered[0].text).toContain("consult_id: child-abc");
   });
 
-  it("falls through the chain on a model failure and stops on an authorization refusal", async () => {
+  it("routes a rejected activation result through the classification table and stops the chain", async () => {
     const host = fakeHost("child-1", new Error("boom"));
     const d = deps(host);
     const tool = createSecondOpinionTool(d);
-    // "boom" settles as a rejected result promise → waitWithTimeout rethrows → execute rethrows.
-    await expect(tool.execute({ question: "q?" }, exec())).rejects.toThrow("boom");
+    // An infrastructure fault rejects the activation promise; the tool reports it
+    // as an actionable failure instead of throwing, and the chain does not continue.
+    const value = (await tool.execute({ question: "q?" }, exec())) as ToolValue;
+    expect(value.advice).toContain("顾问运行中断");
+    expect(value.advice).toContain("boom");
+    expect(value.attempts).toEqual([{ label: "z-ai/glm-5.4", ok: false, reason: "顾问运行中断（z-ai/glm-5.4）：boom" }]);
+    expect(lossless(value)).toBeNull();
 
     host.optional = vi.fn(() => ({ allowedRoutes: () => [] })) as never;
     const refused = (await tool.execute({ question: "q?" }, exec())) as ToolValue;

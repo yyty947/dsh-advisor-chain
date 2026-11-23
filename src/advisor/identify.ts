@@ -26,12 +26,17 @@ export interface AdvisorChildRecord {
   readonly label: string;
   provider: string;
   model: string;
+  /** Set when the child was one half of a dual consultation (not follow-up-able). */
+  dual?: boolean;
   readonly createdAt: number;
   /** Activation epochs seen for this child (initial start + each cold resume). */
   epoch: number;
   sandbox: SandboxState;
   observation?: ChildObservation;
 }
+
+/** Records kept in memory; older ones stay reachable through the durable log. */
+const MAX_RECORDS = 64;
 
 export interface RegistryDeps {
   host: HostServices;
@@ -107,16 +112,28 @@ export class AdvisorRegistry {
   }
 
   /** Create the record for a child we started, or fill in what `onStart` could not know. */
-  record(input: { childId: string; parentSessionId: string; consultId: string; label: string; provider: string; model: string }): AdvisorChildRecord {
+  record(input: { childId: string; parentSessionId: string; consultId: string; label: string; provider: string; model: string; dual?: boolean }): AdvisorChildRecord {
     const existing = this.records.get(input.childId);
     if (existing) {
       if (!existing.consultId) existing.consultId = input.consultId;
       if (!existing.provider) existing.provider = input.provider;
       if (!existing.model) existing.model = input.model;
+      if (input.dual) existing.dual = true;
+      this.records.delete(input.childId);
+      this.records.set(input.childId, existing);
       return existing;
     }
     const record: AdvisorChildRecord = { ...input, createdAt: this.now(), epoch: 0, sandbox: "unknown" };
     this.records.set(input.childId, record);
+    // Bound memory: the oldest records are evicted; their threads remain
+    // readable through the durable child log (cold follow-up path).
+    while (this.records.size > MAX_RECORDS) {
+      const oldest = this.records.keys().next().value;
+      if (oldest === undefined) break;
+      const evicted = this.records.get(oldest);
+      evicted?.observation?.dispose();
+      this.records.delete(oldest);
+    }
     return record;
   }
 

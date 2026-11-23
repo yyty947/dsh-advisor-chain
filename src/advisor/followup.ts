@@ -109,8 +109,15 @@ export async function beginFollowUp(host: HostServices, registry: AdvisorRegistr
     });
   }
   const observation = registry.observation(childId);
-  if (live && observation && observation.turnEnds === 0 && !observation.ended) {
-    return { ok: false, kind: "other", message: "顾问仍在回答首次问题，请等它完成后再追问。" };
+  const liveAgent = live ? host.agents.get(childId as SessionId) : undefined;
+  // A running child would fold the follow-up into its current turn as steering;
+  // wait for it to go idle instead (warm follow-ups are rare — the host
+  // usually settles an idle child's activation right after its answer).
+  if (liveAgent && (liveAgent.status !== "idle" || (observation && observation.turnEnds === 0 && !observation.ended))) {
+    return { ok: false, kind: "other", message: "顾问仍在回答，请等它完成后再追问。" };
+  }
+  if (record.dual) {
+    return { ok: false, kind: "other", message: "双意见咨询不支持追问；请基于单一模型开新咨询。" };
   }
   const round = facts.followUps + 1;
   if (round > input.maxRounds) {
@@ -146,7 +153,13 @@ export async function finishFollowUp(
 ): Promise<AdvisorOutcome> {
   const { childId } = begin;
   const turnDone = registry.waitForTurnEnd(childId, begin.gate, signal);
-  const interrupt = () => host.subagents.interrupt(childId as SessionId, { kind: "ancestor", agent: parent });
+  const interrupt = () => {
+    try {
+      host.subagents.interrupt(childId as SessionId, { kind: "ancestor", agent: parent });
+    } catch {
+      // Interruption is best-effort; the bounded settle wait in waitWithTimeout covers a child that ignores it.
+    }
+  };
   const onAbort = () => interrupt();
   signal.addEventListener("abort", onAbort, { once: true });
   let abortedBy: AbortReason | undefined;

@@ -2,8 +2,11 @@
 # Layer semantics: a YAML array of row verbs; `insert` adds plugin rows to the
 # composed config. A row's `id` must be unique within the layer stack; `name`
 # resolves the plugin module through the installed package (package.json#main).
-# The embedded config carries the settings the user had already saved under
-# the pre-rename identity, so upgrading keeps their advisor chain intact.
+#
+# The embedded config ships an EMPTY chain on purpose: every installation picks
+# its own providers in 设置 → Second Opinion (models are configured in DSH's
+# own 设置 → 模型 page). Versions <= 0.3.9 shipped the maintainer's personal
+# chain here, which pointed at provider ids that do not exist elsewhere.
 - insert:
     - id: dsh-advisor-chain
       name: dsh-advisor-chain
@@ -11,21 +14,12 @@
         enabled: true
         mode: auto
         contextMode: inherited
-        chain:
-          - provider: zai-coding-cn
-            model: glm-5.3-flash
-            reasoningEffort: max
-            temperature: 0
-            maxTokens: 65536
-            timeoutMs: 60000
-          - label: ""
-            provider: iflab
-            model: qwen-claude
-            reasoningEffort: max
+        chain: []
+        followup:
+          maxRounds: 8
         trigger:
           repeatThreshold: 3
         limits:
-          defaultTimeoutMs: 120000
-          transcriptMaxChars: 60000
-          perEntryMaxChars: 2000
-        modelCatalog: {}
+          defaultTimeoutMs: 300000
+          transcriptMaxChars: 120000
+          perEntryMaxChars: 4000

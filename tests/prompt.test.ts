@@ -7,10 +7,11 @@ const base = {
   mode: "auto" as const,
   contextMode: "inherited" as const,
   advisorPrompt: DEFAULT_ADVISOR_PROMPT,
-  modelCatalog: {} as Record<string, string[]>,
   chain: [{ provider: "p", model: "m" }],
+  followup: { maxRounds: 8 },
+  legacyNoticeDismissed: false,
   trigger: { repeatThreshold: 3 },
-  limits: { defaultTimeoutMs: 120000, transcriptMaxChars: 60000, perEntryMaxChars: 2000 },
+  limits: { defaultTimeoutMs: 300000, transcriptMaxChars: 120000, perEntryMaxChars: 4000 },
 };
 
 describe("buildSectionText", () => {
@@ -58,7 +59,7 @@ describe("normalizeConfig", () => {
     expect(cfg.mode).toBe("auto");
     expect(cfg.chain).toEqual([]);
     expect(cfg.trigger.repeatThreshold).toBe(3);
-    expect(cfg.limits.transcriptMaxChars).toBe(60000);
+    expect(cfg.limits.transcriptMaxChars).toBe(120000);
   });
 
   it("drops invalid chain entries and keeps valid ones", () => {
@@ -81,14 +82,8 @@ describe("normalizeConfig", () => {
     expect(cfg.chain[0].provider).toBe("p");
   });
 
-  it("preserves the persisted model catalog and drops malformed entries", () => {
-    const cfg = normalizeConfig({
-      modelCatalog: {
-        "zai-coding-cn": ["glm-5.3", 42, null, "glm-5.3-flash"],
-        broken: "not-an-array",
-      },
-    });
-    expect(cfg.modelCatalog).toEqual({ "zai-coding-cn": ["glm-5.3", "glm-5.3-flash"] });
-    expect(cfg.modelCatalog).not.toHaveProperty("broken");
+  it("drops the persisted model catalog written by earlier releases", () => {
+    const cfg = normalizeConfig({ modelCatalog: { "z-ai": ["glm-5.3-flash"] } });
+    expect("modelCatalog" in cfg).toBe(false);
   });
 });

@@ -4,24 +4,40 @@
 
 DeepSeek Harness（DSH）插件：让主模型在需要时——自动判断或用户手动触发——向配置好的**顾问模型链**征求第二意见。
 
+**从 0.3.9 及更早版本升级？请先读 [升级须知](#升级须知)。**
+
 核心特性：
 
-- **自动上下文继承**：顾问通过 DSH 会话投影 `deriveMessages()` 自动看到当前会话的完整对话记录，主模型调用 `second_opinion` 时只需一句问题，不复述背景（`context` 参数仅用于补充对话之外的信息）。
-- **降级链**：顾问模型按顺序尝试，失败（出错或超时无产出）自动顺延；超时但有部分产出按「已截断」显式标记。
-- **盲审模式**：`mode: "standalone"` 时顾问不看对话，只依据问题与补充背景独立判断，并可推翻主代理的既有观点——适合需要不受主对话思路影响的场景（设置里可改默认模式）。
-- **追问**：每次咨询返回 `consult_id`，携带它 + `follow_up` 可让同一位顾问带着线程上下文继续作答；线程持久化在会话日志中，重启后依然可追问。
+- **只读顾问子代理**：顾问是 DSH 原生子代理，运行在 read-only 沙箱里——能读文件、跑只读命令核实，但改不了任何东西；回答只交给主模型。
+- **自动上下文继承**：顾问收到当前会话（含当前轮次）的有界文本抄本，主模型调用 `second_opinion` 时只需一句问题，不复述背景（`context` 参数仅用于补充对话之外的信息；大文件给路径，顾问自己去读）。
+- **盲审模式**：`mode: "standalone"` 时顾问不看对话，只依据问题与补充背景独立判断，并可推翻主代理的既有观点（设置里可改默认模式）。
+- **降级链**：顾问模型按顺序尝试，失败自动顺延；失败原因（限流、鉴权、上下文超限……）真实可见。
+- **追问**：每次咨询返回 `consult_id`，携带它 + `follow_up` 可让同一位顾问带着线程上下文继续作答，重启后依然可追问。
 - **双意见对比**：`dual_opinions: true` 并行咨询链上前两位顾问（互不可见），一次拿到两份独立意见。
 - **触发**：auto（系统提示软规则 + 同一问题重复 N 次的硬触发）/ manual（仅用户明确要求）。
-- **会话卡片**：咨询过程（问题、思考、回答、追问 Q/A、尝试记录）以会话事件留痕，UI 渲染成卡片，可回放。
-- **原生设置页**：模型链编辑、provider/模型下拉（可拉取模型列表）、推理档位、默认咨询模式；保存即时生效。
+- **原生设置页**：从 DSH 的模型页读取供应商 / 模型 / 推理档位，逐条显示可用状态，一键把模型授权给子代理；保存即时生效。
 
-设置入口：**设置 → Second Opinion**。设计文档与决策记录见 [HANDOVER-DSH-ADVISOR.md](HANDOVER-DSH-ADVISOR.md)。
+设置入口：**设置 → Second Opinion**。模型与推理等级在 DSH 自带的 **设置 → 模型** 页配置，本插件只从中选择。
+
+## 升级须知 {#升级须知}
+
+**旧会话。** 0.3.9 及更早版本每次咨询都会向会话日志写入 `advisor/*` 事件，而 DSH 遇到不认识的事件类型会拒绝打开整个会话。0.3.10 不再写入这类事件，并保留了只读的兼容垫片：**只要本插件保持启用，含旧事件的会话照常打开；卸载本插件后它们可能无法打开。** 改写旧事件的修复工具计划在下一版本提供；升级后设置页会显示一次提醒。
+
+**出厂链为空。** 0.3.9 的包内置了维护者的个人链（含其他机器上不存在的供应商 id）。0.3.10 的出厂配置是空链，升级后请到 设置 → Second Opinion 重新选择供应商和模型。
+
+**首次需要授权。** DSH 默认只允许子代理使用与主对话相同的模型。要让顾问使用独立模型，在设置页点击「授权」（或白名单关闭时的「开启并授权」）。它写入的是 DSH 自己的子代理模型白名单（设置 → 插件 → 子代理 可查看），插件不会绕过这个白名单。
+
+**其他变化。** 父对话里不再有内嵌的实时滚字（顾问过程在子代理面板查看）；旧版本的 `consult_id` 不再可追问；每条链的「温度」设置被移除（子代理接口不支持）。
+
+完整变更见 [CHANGELOG.md](CHANGELOG.md)。设计文档见 [docs/DESIGN-0.3.10.md](docs/DESIGN-0.3.10.md)；早期设计记录见 [HANDOVER-DSH-ADVISOR.md](HANDOVER-DSH-ADVISOR.md)。
 
 ## 灵感来源
 
-本项目的设计思路来自 [pixelsama/codex-advisor](https://github.com/pixelsama/codex-advisor)——一个为 Codex 打造的第二意见咨询插件。「让独立模型复核关键决策」这个想法源自它；本插件则是针对 DeepSeek Harness 的重新实现：机制上换用 DSH 原生的会话投影、模型路由与设置体系，并在此基础上扩展了模型链降级、盲审模式、追问线程与双意见对比。感谢原作者的启发与分享。
+本项目的设计思路来自 [pixelsama/codex-advisor](https://github.com/pixelsama/codex-advisor)——一个为 Codex 打造的第二意见咨询插件。「让独立模型复核关键决策」这个想法源自它；本插件则是针对 DeepSeek Harness 的重新实现：机制上换用 DSH 原生的子代理、模型路由与设置体系，并在此基础上扩展了模型链降级、盲审模式、追问线程与双意见对比。感谢原作者的启发与分享。
 
 ## 安装
+
+要求 DSH ≥ 0.2.2-rc.4（在 0.2.3-alpha.2 上验证）。
 
 **插件市场（推荐）**：DSH 设置 → 插件市场，搜索 **dsh-advisor-chain**，一键安装。
 
@@ -48,6 +64,7 @@ pnpm install
 pnpm build        # tsdown → lib/index.mjs + lib/client.js
 pnpm test         # vitest
 pnpm typecheck
+node scripts/verify-peer-range.mjs   # 核对 engines.dsh / peer 范围（两种 semver 模式）
 ```
 
 ## License
@@ -60,15 +77,11 @@ MIT
 
 A DeepSeek Harness (DSH) plugin: the main model asks a configured **advisor model chain** for a second opinion whenever needed — auto-judged or user-triggered.
 
-Highlights: automatic full-conversation context inheritance via `deriveMessages()` (the advisor sees what the main model sees; no manual background hand-off); an ordered fallback chain with per-entry timeout and explicit truncation marking; auto/manual trigger modes with a repeated-question hard trigger; durable consultation cards in the chat stream; and a native settings page with model-chain editing. See [HANDOVER-DSH-ADVISOR.md](HANDOVER-DSH-ADVISOR.md) for the design history.
+The advisor is a DSH native **read-only subagent**: it can read files and run read-only commands to verify facts, but cannot change anything, and it reports only to the main model. It receives a bounded transcript of the current conversation (including the in-flight turn) or, in blind-review mode, only the question plus out-of-band context. Failures fall through the chain with their real reasons surfaced. Supports follow-up threads, dual opinions, and a native settings page that reads providers, models, and reasoning efforts from DSH's own model settings and authorizes them for subagents in one click.
 
-## Inspiration
+**Upgrading from 0.3.9 or earlier?** Read the upgrade notes above ([升级须知](#升级须知)): old sessions that contain `advisor/*` events stay openable while this plugin remains enabled; the bundled default chain is now empty; and advisors need a one-time authorization in the settings page.
 
-The idea for this project comes from [pixelsama/codex-advisor](https://github.com/pixelsama/codex-advisor), a second-opinion plugin for Codex. It inspired the core premise — letting an independent model review key decisions — which is reimplemented here for DeepSeek Harness using its native session projection, model routing, and settings, extended with model-chain failover, blind review, follow-up threads, and dual opinions. Thanks to the original author for the inspiration.
-
-## Install
-
-**Plugin market (recommended)**: DSH Settings → Plugin Market, search **dsh-advisor-chain**.
+Requires DSH ≥ 0.2.2-rc.4 (verified on 0.2.3-alpha.2).
 
 ```bash
 dsh plugin --profile desktop add dsh-advisor-chain

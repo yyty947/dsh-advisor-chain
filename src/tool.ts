@@ -1,41 +1,30 @@
-import { randomUUID } from "node:crypto";
-import { createUserMessage } from "@deepseek-ai/dsh-llm";
-import { defineTool } from "@deepseek-ai/dsh-tools";
-import type { ToolRunContext } from "@deepseek-ai/dsh-tools";
-import { entryName, runAdvisorChain, AllEntriesFailedError, type ChainAttemptTarget, type StreamResult } from "./chain";
-import { appendAdvisorDelta, appendAdvisorEnd, appendAdvisorFollowup, appendAdvisorMessage, appendAdvisorStart, type SessionLogLike } from "./events";
-import { buildAdvisorUserPrompt, buildTranscript, type DerivedMessageLike } from "./transcript";
-import { BLIND_REVIEW_MODIFIER, type AdvisorConfig, type ChainEntry } from "./config";
-import { rebuildThread, threadCapacityError, threadToMessages, type ThreadEventLike } from "./threads";
+import { defineTool, type ToolOutputDefinition, type ToolRunContext } from "@deepseek-ai/dsh-tools";
+import type { Agent } from "@deepseek-ai/dsh-agent";
+import type { SubagentActivation } from "@deepseek-ai/dsh-subagent";
+import { foldSubagentDescriptor } from "@deepseek-ai/dsh-subagent";
+import { buildTranscript } from "./transcript";
+import type { AdvisorConfig, ChainEntry } from "./config";
+import { entryName } from "./chain";
+import { ADVISOR_LABEL_PREFIX, type AdvisorRegistry } from "./advisor/identify";
+import { buildAdvisorPrompt } from "./advisor/preamble";
+import { startAdvisor, type Refusal } from "./advisor/start";
+import { beginFollowUp, finishFollowUp } from "./advisor/followup";
+import { settleOutcome, waitWithTimeout, type AdvisorOutcome } from "./advisor/result";
+import { noopLogger, type HostServices, type Logger } from "./advisor/types";
 
-/** Combine an optional caller signal with a hard timeout; the pair keeps the
- *  timeout signal reachable so an aborted stream can be classified:
- *  timeout fired → graceful truncation; caller signal → cancellation. */
-function timeoutSignalPair(ms: number, signal?: AbortSignal) {
-  const timeout = AbortSignal.timeout(ms);
-  return {
-    signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
-    isTimeout: () => timeout.aborted,
-  };
-}
+/** The JSON value type `presentationMeta` must return, without importing a transitive package. */
+type JsonMeta = ReturnType<NonNullable<ToolOutputDefinition["presentationMeta"]>>;
 
-interface ToolExecSession extends SessionLogLike {
-  deriveMessages?: () => DerivedMessageLike[];
-}
+/** Refusals carry a `kind`; outcomes never do (their optional `failure` is absent on success). */
+const isRefusal = (r: AdvisorOutcome | Refusal | (AdvisorOutcome & { childId: string })): r is Refusal => "kind" in r && typeof (r as Refusal).kind === "string";
 
-function sessionLogOf(exec: ToolRunContext): ToolExecSession | undefined {
-  const agent = (exec as unknown as { agent?: { session?: unknown } }).agent;
-  const session = (agent as { session?: unknown } | undefined)?.session;
-  return (session as ToolExecSession | undefined) ?? undefined;
-}
+export const TOOL_NAME = "second_opinion";
 
-export interface AdvisorAskDeps {
-  ctx: {
-    llm: {
-      stream: (options: Record<string, unknown>) => AsyncIterable<{ type: string; text?: string }>;
-    };
-  };
+export interface AdvisorDeps {
+  host: HostServices;
+  registry: AdvisorRegistry;
   getConfig: () => AdvisorConfig;
+  log?: Logger;
 }
 
 interface ToolArgs {
@@ -47,24 +36,50 @@ interface ToolArgs {
   dual_opinions?: boolean;
 }
 
-interface CallEntry {
-  provider: string;
+export type AttemptRecord = {
+  label: string;
+  ok: boolean;
+  reason?: string;
+};
+
+/** Canonical tool value (validated against `output.schema`). */
+export interface ToolValue {
+  advice: string;
   model: string;
-  reasoningEffort?: "off" | "low" | "high" | "max";
-  temperature?: number;
-  maxTokens?: number;
-  timeoutMs?: number;
+  consultId: string;
+  dual: boolean;
+  truncated: boolean;
+  attempts: AttemptRecord[];
+  /** Facts the main model should know: ignored efforts, transcript truncation, timeouts. */
+  notes: string[];
+  /** Follow-up round this answer belongs to; absent on a new consultation. */
+  round?: number;
 }
 
-const HINT_FOLLOWUP = (consultId: string) =>
-  `\n\n（consult_id: ${consultId} —— 如需继续追问该顾问，携带此 consult_id 与 follow_up 参数再次调用。）`;
+const HINT_FOLLOWUP = (consultId: string) => `\n\n（consult_id: ${consultId} —— 如需继续追问该顾问，携带此 consult_id 与 follow_up 参数再次调用。追问结果以本次工具返回为准；宿主随后可能在对话里投递一条内容相同的子代理完成通知，忽略即可。）`;
 const HINT_DUAL = "\n\n（双意见咨询不支持追问；如需追问请基于单一模型开新咨询。）";
 
-export function createSecondOpinionTool(deps: AdvisorAskDeps) {
+function textOfAdvice(value: ToolValue): string {
+  const notes = value.notes.length ? `\n\n（注：${value.notes.join("；")}）` : "";
+  return value.advice + notes + (value.consultId ? (value.dual ? HINT_DUAL : HINT_FOLLOWUP(value.consultId)) : "");
+}
+
+function clipForMeta(text: string | undefined, max = 2000): string | undefined {
+  if (typeof text !== "string") return undefined;
+  return text.length > max ? `${text.slice(0, max)}…` : text;
+}
+
+export function createSecondOpinionTool(deps: AdvisorDeps) {
+  const log = deps.log ?? noopLogger;
   return defineTool({
-    name: "second_opinion",
+    name: TOOL_NAME,
     description:
-      "向配置的顾问模型链征求第二意见。默认自动继承当前会话的完整对话（不要在问题中复述背景）；支持追问（consult_id + follow_up）、盲审模式（mode=standalone，顾问不看对话只依据问题与背景独立判断）与双意见对比（dual_opinions，并行听取链上前两位顾问）。适用于重大方案决策前的复核、高风险判断、对自己结论把握不足、或同一问题连续受阻时；用户明确要求咨询顾问时也调用。",
+      "向配置的顾问模型链征求第二意见。顾问是一位只读的子代理：可以读文件、跑只读命令核实，但不能修改任何东西，回答只交给你。" +
+      "默认继承模式：顾问会收到当前会话的有界文本抄本（工具输出可能被截断、更早消息可能被省略），不要在问题中复述背景；" +
+      "问题若依赖对话外的信息（你的意图、没说出口的约束、被省略的早期细节）写进 context，若依赖某个大文件或长输出就给出路径让顾问自己去读。" +
+      "盲审模式（mode=standalone）：顾问看不到对话，务必在 context 里写清目标、约束、已尝试的做法和相关文件路径。" +
+      "支持追问（consult_id + follow_up，顾问说缺信息时也可这样补充）、双意见对比（dual_opinions，并行咨询链上前两位顾问）。" +
+      "适用于重大方案决策前的复核、高风险判断、对自己结论把握不足、或同一问题连续受阻时；用户明确要求咨询顾问时也调用。",
     parameters: {
       question: {
         type: "string",
@@ -72,11 +87,11 @@ export function createSecondOpinionTool(deps: AdvisorAskDeps) {
       },
       context: {
         type: "string",
-        description: "可选。仅补充对话记录中不存在的信息：你的私有推理意图、未说出口的约束、或来自更早被省略历史的要点。没有就省略。",
+        description: "可选。对话记录里不存在的信息：你的私有推理意图、未说出口的约束、被抄本省略的早期要点。盲审模式下必须写清目标、约束、已尝试的做法和相关文件路径。",
       },
       mode: {
         type: "string",
-        description: "可选，按次覆盖默认咨询模式。inherited：继承完整对话（默认）；standalone：盲审——顾问不看对话，只依据问题与 context 独立判断，适合需要不受主对话思路影响的场景。",
+        description: "可选，按次覆盖默认咨询模式。inherited：顾问获得会话抄本（默认）；standalone：盲审——顾问不看对话，只依据问题与 context 独立判断，适合需要不受主对话思路影响的场景。",
       },
       consult_id: {
         type: "string",
@@ -88,7 +103,7 @@ export function createSecondOpinionTool(deps: AdvisorAskDeps) {
       },
       dual_opinions: {
         type: "boolean",
-        description: "可选。true 时并行咨询链上前两位顾问（互不可见对方；链上仅一个模型时，同一模型独立采样两次），返回两份独立意见；不支持追问。",
+        description: "可选。true 时并行咨询链上前两位顾问（互不可见对方；链上仅一个模型时，同一模型独立咨询两次），返回两份独立意见；不支持追问。",
       },
     },
     output: {
@@ -101,373 +116,219 @@ export function createSecondOpinionTool(deps: AdvisorAskDeps) {
           consultId: { type: "string" },
           dual: { type: "boolean" },
           truncated: { type: "boolean" },
+          round: { type: "number" },
+          attempts: {
+            type: "array",
+            items: {
+              type: "object",
+              additionalProperties: false,
+              properties: { label: { type: "string", required: true }, ok: { type: "boolean", required: true }, reason: { type: "string" } },
+            },
+          },
+          notes: { type: "array", items: { type: "string" } },
         },
       },
-      render: (_args: unknown, value: { advice: string; consultId?: string; dual?: boolean }) => [
-        {
-          type: "text",
-          text:
-            value.advice +
-            (value.consultId
-              ? HINT_FOLLOWUP(value.consultId)
-              : value.dual
-                ? HINT_DUAL
-                : ""),
-        },
-      ],
+      render: (_args: unknown, value: unknown) => [{ type: "text", text: textOfAdvice(value as ToolValue) }],
+      presentationMeta: (args: unknown, value: unknown) => {
+        const a = (args ?? {}) as ToolArgs;
+        const v = value as ToolValue;
+        // JSON-safe: undefined members are omitted rather than emitted.
+        const meta: Record<string, JsonMeta> = {
+          kind: "second-opinion",
+          model: v.model,
+          consultId: v.consultId,
+          dual: v.dual,
+          truncated: v.truncated,
+          attempts: v.attempts,
+          notes: v.notes,
+        };
+        const optional: Record<string, JsonMeta | undefined> = {
+          question: clipForMeta(a.question),
+          context: clipForMeta(a.context),
+          mode: typeof a.mode === "string" ? a.mode : undefined,
+          followUp: clipForMeta(a.follow_up),
+          round: v.round,
+        };
+        for (const [key, val] of Object.entries(optional)) if (val !== undefined) meta[key] = val;
+        return meta as JsonMeta;
+      },
     },
     async execute(args: ToolArgs, exec: ToolRunContext) {
       const cfg = deps.getConfig();
-      const fail = (advice: string) => ({ advice, model: "", consultId: "", dual: false, truncated: false });
+      const fail = (advice: string): ToolValue => ({ advice, model: "", consultId: "", dual: false, truncated: false, attempts: [], notes: [] });
       if (!cfg.enabled) return fail("Second Opinion 当前已停用（设置中可开启）。");
-      if (cfg.chain.length === 0) {
-        return fail("顾问链尚未配置任何模型。请先到 设置 → Second Opinion 添加顾问模型。");
-      }
-      const sessionLog = sessionLogOf(exec);
-      const mode: "inherited" | "standalone" =
-        args.mode === "standalone" ? "standalone" : args.mode === "inherited" ? "inherited" : cfg.contextMode;
-      const system = mode === "standalone" ? `${cfg.advisorPrompt}\n\n${BLIND_REVIEW_MODIFIER}` : cfg.advisorPrompt;
+      if (cfg.chain.length === 0) return fail("顾问链尚未配置任何模型。请先到 设置 → Second Opinion 添加顾问模型。");
 
-      const failWithLog = (consultId: string, attempts: Array<{ label: string; ok: boolean; error?: string }>, advice: string) => {
-        appendAdvisorEnd(sessionLog ?? {}, { consultId, status: "failed", attempts });
-        return { advice, model: "", consultId: "", dual: false, truncated: false };
-      };
+      const parent = exec.agent as Agent | undefined;
+      if (!parent) return fail("当前执行环境没有会话上下文，无法咨询顾问。");
+      if (deps.registry.isAdvisor(String(parent.id)) || isAdvisorChild(parent)) {
+        return fail("你已经是顾问子代理：顾问不能再咨询 second_opinion，直接给出你的意见即可。");
+      }
 
       // ---------- follow-up branch ----------
       if (args.consult_id) {
         if (args.dual_opinions) return fail("双意见咨询不支持追问；请基于单一模型开新咨询。");
-        if (typeof args.follow_up !== "string" || !args.follow_up.trim()) {
-          return fail("追问需要提供 follow_up 参数（要继续追问的内容）。");
-        }
-        if (!sessionLog) return fail("当前会话不支持追问（无会话日志）。请开新咨询。");
-        let events: ThreadEventLike[] = [];
-        try {
-          events = (sessionLog.snapshotEvents?.() ?? []) as unknown as ThreadEventLike[];
-        } catch {
-          events = [];
-        }
-        const thread = rebuildThread(events, args.consult_id);
-        if (!thread) {
-          return fail("未找到该 consult_id 对应的咨询记录（可能属于其他会话，或记录已不存在）。请开新咨询。");
-        }
-        const followUp = args.follow_up.trim();
-        const capErr = threadCapacityError(thread, followUp.length);
-        if (capErr) return fail(capErr);
-        const provider = thread.usedProvider;
-        const model = thread.usedModel;
-        if (!provider || !model) return fail("该线程缺少可用的顾问模型记录，请开新咨询。");
-        const followRound = thread.rounds + 1;
-        const consultId = args.consult_id;
-        appendAdvisorFollowup(sessionLog, { consultId, round: followRound, followUp, provider, model });
-        try {
-          const result = await streamOnce(deps, cfg, sessionLog, {
-            consultId,
-            entry: { provider, model },
-            system,
-            messages: threadToMessages(thread, followUp),
-            attemptIndex: 0,
-            round: followRound,
-            label: `${provider}/${model}`,
-            signal: exec.signal,
-          });
-          if (!result.content.trim()) {
-            return failWithLog(consultId, [{ label: `${provider}/${model}`, ok: false, error: "空响应" }], `顾问本轮返回为空，请换个问法追问或开新咨询。`);
-          }
-          appendAdvisorMessage(sessionLog, {
-            consultId,
-            attemptIndex: 0,
-            round: followRound,
-            label: `${provider}/${model}`,
-            provider,
-            model,
-            content: result.content,
-            ...result.thinking ? { thinking: result.thinking } : {},
-            ...result.truncated ? { truncated: true } : {},
-          });
-          appendAdvisorEnd(sessionLog, {
-            consultId,
-            status: "done",
-            usedModel: `${provider}/${model}`,
-            attempts: [{ label: `${provider}/${model}`, ok: true }],
-            ...result.truncated ? { truncated: true } : {},
-          });
-          return {
-            advice: result.content,
-            model: `${provider}/${model}`,
-            consultId,
-            dual: false,
-            truncated: result.truncated !== undefined,
-          };
-        } catch (error) {
-          if (exec.signal?.aborted) throw error;
-          return failWithLog(
-            consultId,
-            [{ label: `${provider}/${model}`, ok: false, error: error instanceof Error ? error.message : String(error) }],
-            `追问调用失败：${error instanceof Error ? error.message : String(error)}。可开新咨询重试。`,
-          );
-        }
+        if (typeof args.follow_up !== "string" || !args.follow_up.trim()) return fail("追问需要提供 follow_up 参数（要继续追问的内容）。");
+        const begin = await beginFollowUp(deps.host, deps.registry, {
+          parent,
+          signal: exec.signal,
+          consultId: args.consult_id,
+          followUp: args.follow_up,
+          maxRounds: cfg.followup.maxRounds,
+        });
+        if (!begin.ok) return { ...fail(begin.message), consultId: args.consult_id };
+        const outcome = await finishFollowUp(deps.host, deps.registry, begin, { timeoutMs: cfg.limits.defaultTimeoutMs }, parent, exec.signal);
+        const attempts: AttemptRecord[] = [{ label: "追问", ok: outcome.ok, ...(outcome.failure ? { reason: outcome.failure } : {}) }];
+        if (!outcome.ok) return { advice: `顾问本轮未返回可用回答：${outcome.failure}。可换个问法追问或开新咨询。`, model: "", consultId: args.consult_id, dual: false, truncated: false, attempts, notes: [], round: begin.round };
+        const notes = outcome.truncated ? ["本轮追问超时被中止，以上为已输出的部分回答"] : [];
+        return { advice: outcome.content, model: entryLabelOf(deps, args.consult_id), consultId: args.consult_id, dual: false, truncated: outcome.truncated, attempts, notes, round: begin.round };
       }
 
-      // ---------- new consultation: dual or single ----------
+      // ---------- new consultation ----------
       if (typeof args.question !== "string" || !args.question.trim()) {
         return fail("缺少 question 参数：请提供要征求第二意见的具体问题（或提供 consult_id + follow_up 进行追问）。");
       }
       const question = args.question.trim();
-      const consultId = randomUUID();
-      const userPrompt =
-        mode === "standalone"
-          ? [question, ...args.context && args.context.trim() ? [args.context.trim()] : []].join("\n\n")
-          : buildAdvisorUserPrompt({
-              transcriptText: (() => {
-                let history: DerivedMessageLike[] = [];
-                try {
-                  history = sessionLog?.deriveMessages?.() ?? [];
-                } catch {
-                  history = [];
-                }
-                return buildTranscript(history, {
-                  maxChars: cfg.limits.transcriptMaxChars,
-                  perEntryMaxChars: cfg.limits.perEntryMaxChars,
-                }).text;
-              })(),
-              question,
-              context: args.context,
-            });
-
-      if (args.dual_opinions) {
-        // Two independent samples: the first two chain entries — or, when the
-        // chain has a single model, the same model asked twice independently.
-        const pair = cfg.chain.slice(0, 2);
-        if (pair.length === 1) pair.push(pair[0]);
-        appendAdvisorStart(sessionLog ?? {}, {
-          consultId,
-          question,
-          ...args.context === undefined ? {} : { context: args.context },
-          mode,
-          chain: pair,
-        });
-        const settled = await Promise.allSettled(
-          pair.map((entry, attemptIndex) =>
-            streamOnce(deps, cfg, sessionLog, {
-              consultId,
-              entry,
-              system,
-              messages: [{ role: "user" as const, text: userPrompt }],
-              attemptIndex,
-              label: entryName(entry),
-              signal: exec.signal,
-            }),
-          ),
-        );
-        const sections: string[] = [];
-        const models: string[] = [];
-        const attempts: Array<{ label: string; ok: boolean; error?: string }> = [];
-        let anyTruncated = false;
-        let anyContent = false;
-        settled.forEach((outcome, i) => {
-          const label = entryName(pair[i]);
-          if (outcome.status === "fulfilled" && outcome.value.content.trim()) {
-            anyContent = true;
-            if (outcome.value.truncated) anyTruncated = true;
-            models.push(`${pair[i].provider}/${pair[i].model}`);
-            attempts.push({ label, ok: true });
-            if (sessionLog) {
-              appendAdvisorMessage(sessionLog, {
-                consultId,
-                attemptIndex: i,
-                label,
-                provider: pair[i].provider,
-                model: pair[i].model,
-                content: outcome.value.content,
-                ...outcome.value.thinking ? { thinking: outcome.value.thinking } : {},
-                ...outcome.value.truncated ? { truncated: true } : {},
-              });
-            }
-            sections.push(`【意见一/二 · ${label}${outcome.value.truncated ? " · 已截断" : ""}】\n${outcome.value.content}`);
-          } else {
-            const reason =
-              outcome.status === "rejected"
-                ? outcome.reason instanceof Error
-                  ? outcome.reason.message
-                  : String(outcome.reason)
-                : "空响应";
-            attempts.push({ label, ok: false, error: reason });
-            sections.push(`【意见一/二 · ${label}】本次未返回可用内容：${reason}`);
-          }
-        });
-        appendAdvisorEnd(sessionLog ?? {}, {
-          consultId,
-          status: anyContent ? "done" : "failed",
-          usedModel: models.join(" + "),
-          attempts,
-          ...anyTruncated ? { truncated: true } : {},
-        });
-        if (!anyContent) {
-          return { advice: `双意见咨询全部失败：${attempts.filter((a) => !a.ok).map((a) => `${a.label}（${a.error}）`).join("；")}。请基于自己的判断继续。`, model: "", consultId, dual: true, truncated: false };
+      const mode: "inherited" | "standalone" = args.mode === "standalone" ? "standalone" : args.mode === "inherited" ? "inherited" : cfg.contextMode;
+      const notes: string[] = [];
+      const promptText = buildPromptText(deps, parent, cfg, mode, question, args.context, notes);
+      const live: SubagentActivation[] = [];
+      /** An attempt's outcome plus the child that produced it; `consult_id` is the child's session id so follow-ups can find the thread. */
+      type RunResult = (AdvisorOutcome & { childId: string }) | Refusal;
+      const runEntry = async (entry: ChainEntry, prompt: string): Promise<RunResult> => {
+        const label = entryName(entry);
+        const started = await startAdvisor(deps.host, deps.registry, { parent, signal: exec.signal, entry, entryLabel: label, promptText: prompt, consultId: "", mode });
+        if (!started.ok) return started;
+        live.push(started.activation);
+        if (started.effortIgnored) notes.push(`推理档位「${entry.reasoningEffort}」未被模型 ${entry.provider}/${entry.model} 声明，已忽略`);
+        const childId = String(started.activation.childId);
+        try {
+          const { value, abortedBy } = await waitWithTimeout({
+            run: started.activation.result,
+            observation: () => deps.registry.observation(childId) ?? started.observation,
+            policy: { timeoutMs: entry.timeoutMs ?? cfg.limits.defaultTimeoutMs },
+            abort: () => void started.activation.dispose().catch(() => {}),
+            signal: exec.signal,
+          });
+          const outcome = settleOutcome({ result: value, observation: deps.registry.observation(childId) ?? started.observation, abortedBy });
+          if (outcome.ok && outcome.truncated) notes.push(`${label}：超时后按已输出内容截断`);
+          return { ...outcome, childId };
+        } finally {
+          live.splice(live.indexOf(started.activation), 1);
         }
-        const failedNote = attempts.some((a) => !a.ok)
-          ? `\n\n（注：部分顾问未返回可用内容，本次仅包含成功返回的意见。）`
-          : "";
-        return {
-          advice: sections.join("\n\n———\n\n") + failedNote,
-          model: models.join(" + "),
-          consultId,
-          dual: true,
-          truncated: anyTruncated,
-        };
-      }
+      };
+      const isRun = (r: RunResult): r is AdvisorOutcome & { childId: string } => !isRefusal(r);
 
-      // ---------- single new consultation (inherited chain) ----------
-      appendAdvisorStart(sessionLog ?? {}, {
-        consultId,
-        question,
-        ...args.context === undefined ? {} : { context: args.context },
-        mode,
-        chain: cfg.chain,
-      });
-      const attempts: Array<{ label: string; ok: boolean; error?: string }> = [];
       try {
-        const outcome = await runAdvisorChain(
-          cfg.chain,
-          (entry: ChainEntry, signal: AbortSignal) =>
-            streamOnce(deps, cfg, sessionLog, {
-              consultId,
-              entry,
-              system,
-              messages: [{ role: "user" as const, text: userPrompt }],
-              attemptIndex: cfg.chain.indexOf(entry),
-              label: entryName(entry),
-              signal,
-            }),
-          {
-            onFail: (_index, target, error) => {
-              attempts.push({ label: entryName(target), ok: false, error });
-            },
-            onDone: (index, target, result) => {
-              attempts.push({ label: entryName(target), ok: true });
-              if (sessionLog) {
-                appendAdvisorMessage(sessionLog, {
-                  consultId,
-                  attemptIndex: index,
-                  label: entryName(target),
-                  provider: target.provider,
-                  model: target.model,
-                  content: result.content,
-                  ...result.thinking ? { thinking: result.thinking } : {},
-                  ...result.truncated ? { truncated: true } : {},
-                });
-              }
-            },
-          },
-          exec.signal,
-        );
-        appendAdvisorEnd(sessionLog ?? {}, {
-          consultId,
-          status: "done",
-          usedModel: `${outcome.winner!.provider}/${outcome.winner!.model}`,
-          attempts,
-          ...outcome.result?.truncated ? { truncated: true } : {},
-        });
+        if (args.dual_opinions) {
+          const pair = cfg.chain.slice(0, 2);
+          if (pair.length === 1) pair.push(pair[0]);
+          const results = await Promise.all(pair.map((entry) => runEntry(entry, promptText)));
+          const sections: string[] = [];
+          const models: string[] = [];
+          const attempts: AttemptRecord[] = [];
+          let anyTruncated = false;
+          results.forEach((result, i) => {
+            const label = entryName(pair[i]);
+            if (!isRefusal(result) && result.ok && result.content.trim()) {
+              models.push(`${pair[i].provider}/${pair[i].model}`);
+              attempts.push({ label, ok: true });
+              if (result.truncated) anyTruncated = true;
+              sections.push(`【意见一/二 · ${label}${result.truncated ? " · 已截断" : ""}】\n${result.content}`);
+            } else {
+              const reason = isRefusal(result) ? result.message : result.failure ?? "未返回可用内容";
+              attempts.push({ label, ok: false, reason });
+              sections.push(`【意见一/二 · ${label}】本次未返回可用内容：${reason}`);
+            }
+          });
+          const okCount = attempts.filter((a) => a.ok).length;
+          if (okCount === 0) {
+            const hardStop = results.find((r) => isRefusal(r));
+            return {
+              ...fail(`双意见咨询全部失败：${attempts.filter((a) => !a.ok).map((a) => `${a.label}（${a.reason}）`).join("；")}。${hardStop && isRefusal(hardStop) ? hardStop.message : "请基于自己的判断继续。"}`),
+              consultId: "",
+              dual: true,
+              attempts,
+              notes,
+            };
+          }
+          const failedNote = okCount < attempts.length ? "（注：部分顾问未返回可用内容，本次仅包含成功返回的意见。）" : "";
+          const firstChild = results.filter(isRun).find((r) => r.ok)?.childId ?? "";
+          return { advice: sections.join("\n\n———\n\n") + failedNote, model: models.join(" + "), consultId: firstChild, dual: true, truncated: anyTruncated, attempts, notes };
+        }
+
+        const attempts: AttemptRecord[] = [];
+        for (const entry of cfg.chain) {
+          const label = entryName(entry);
+          const result = await runEntry(entry, promptText);
+          if (!isRefusal(result) && result.ok) {
+            attempts.push({ label, ok: true });
+            // consult_id IS the winning child's session id: follow-ups address that thread.
+            deps.registry.record({ childId: result.childId, parentSessionId: String(parent.id), consultId: result.childId, label: ADVISOR_LABEL_PREFIX + label, provider: entry.provider, model: entry.model });
+            return { advice: result.content, model: `${entry.provider}/${entry.model}`, consultId: result.childId, dual: false, truncated: result.truncated, attempts, notes };
+          }
+          if (isRefusal(result)) {
+            // authorization / infrastructure / other: the next entry would hit the same wall.
+            attempts.push({ label, ok: false, reason: result.message });
+            return { ...fail(result.message), consultId: "", dual: false, attempts, notes };
+          }
+          attempts.push({ label, ok: false, reason: result.failure });
+          log(`advisor: ${label} failed: ${result.failure}`);
+        }
         return {
-          advice: outcome.result!.content,
-          model: `${outcome.winner!.provider}/${outcome.winner!.model}`,
-          consultId,
+          ...fail(`顾问链全部调用失败：${attempts.map((a) => `${a.label}（${a.reason}）`).join("；")}。请基于自己的判断继续，或稍后重试。`),
+          consultId: "",
           dual: false,
-          truncated: outcome.result?.truncated !== undefined,
+          attempts,
+          notes,
         };
       } catch (error) {
-        if (error instanceof AllEntriesFailedError) {
-          return failWithLog(
-            consultId,
-            attempts,
-            `顾问链全部调用失败：${error.failures.map((f) => `${entryName(f.target)}（${f.error}）`).join("；")}。请基于自己的判断继续，或稍后重试。`,
-          );
-        }
-        appendAdvisorEnd(sessionLog ?? {}, { consultId, status: "failed", attempts });
+        await Promise.allSettled(live.map((a) => a.dispose()));
         throw error;
+      } finally {
+        // Successful children settle on their own; dispose anything left only on abnormal exits.
+        if (exec.signal.aborted) await Promise.allSettled(live.map((a) => a.dispose()));
       }
     },
   });
 }
 
-/** One throttled, durable-streaming model call shared by every consult shape.
- *  Deltas batch into advisor/delta events (200ms), timeouts degrade into
- *  truncated results instead of throwing (caller signal still throws). */
-async function streamOnce(
-  deps: AdvisorAskDeps,
-  cfg: AdvisorConfig,
-  sessionLog: SessionLogLike | undefined,
-  input: {
-    consultId: string;
-    entry: CallEntry;
-    system: string;
-    messages: Array<{ role: "user" | "assistant"; text: string }>;
-    attemptIndex: number;
-    round?: number;
-    label: string;
-    signal?: AbortSignal;
-  },
-): Promise<StreamResult> {
-  const timeoutMs = input.entry.timeoutMs ?? cfg.limits.defaultTimeoutMs;
-  const pair = timeoutSignalPair(timeoutMs, input.signal);
-  const options: Record<string, unknown> = {
-    provider: input.entry.provider,
-    model: input.entry.model,
-    system: input.system,
-    messages: input.messages.map((m) =>
-      m.role === "user"
-        ? createUserMessage({ content: [{ type: "text", text: m.text }], source: { kind: "user" } })
-        : { role: "assistant", content: [{ type: "text", text: m.text }], source: { kind: "assistant" } }),
-    maxTokens: input.entry.maxTokens ?? 16384,
-    signal: pair.signal,
-    ...input.entry.reasoningEffort === undefined ? {} : { reasoningEffort: input.entry.reasoningEffort },
-    ...input.entry.temperature === undefined ? {} : { temperature: input.entry.temperature },
-  };
-  let text = "";
-  let thinking = "";
-  let pendingText = "";
-  let pendingThinking = "";
-  let flushTimer: ReturnType<typeof setTimeout> | null = null;
-  const flush = () => {
-    if (flushTimer) {
-      clearTimeout(flushTimer);
-      flushTimer = null;
-    }
-    if (!pendingText && !pendingThinking) return;
-    if (sessionLog) {
-      appendAdvisorDelta(sessionLog, {
-        consultId: input.consultId,
-        attemptIndex: input.attemptIndex,
-        ...input.round === undefined ? {} : { round: input.round },
-        label: input.label,
-        ...pendingText ? { text: pendingText } : {},
-        ...pendingThinking ? { thinking: pendingThinking } : {},
-      });
-    }
-    pendingText = "";
-    pendingThinking = "";
-  };
+function buildPromptText(deps: AdvisorDeps, parent: Agent, cfg: AdvisorConfig, mode: "inherited" | "standalone", question: string, context: string | undefined, notes: string[]): string {
+  if (mode === "standalone") return buildAdvisorPrompt({ mode, advisorPrompt: cfg.advisorPrompt, question, context });
+  let history: Parameters<typeof buildTranscript>[0] = [];
   try {
-    for await (const chunk of deps.ctx.llm.stream(options)) {
-      if (chunk.type === "text-delta" && typeof chunk.text === "string") {
-        text += chunk.text;
-        pendingText += chunk.text;
-      } else if (chunk.type === "reasoning-delta" && typeof chunk.text === "string") {
-        thinking += chunk.text;
-        pendingThinking += chunk.text;
-      }
-    }
+    history = parent.session.deriveMessages() as never;
   } catch (error) {
-    flush();
-    if (pair.isTimeout()) {
-      return { content: text, thinking, truncated: { reason: "timeout", atMs: Date.now() } };
-    }
-    throw error;
+    deps.log?.(`advisor: deriveMessages failed: ${error instanceof Error ? error.message : String(error)}`);
   }
-  flush();
-  if (pair.isTimeout()) {
-    return { content: text, thinking, truncated: { reason: "timeout", atMs: Date.now() } };
+  const transcript = buildTranscript(history, {
+    maxChars: cfg.limits.transcriptMaxChars,
+    perEntryMaxChars: cfg.limits.perEntryMaxChars,
+    excludeToolName: TOOL_NAME,
+  });
+  if (transcript.droppedCount > 0) notes.push(`抄本省略了更早的 ${transcript.droppedCount} 条消息（已附最初请求摘要）`);
+  if (transcript.clippedCount > 0) notes.push(`${transcript.clippedCount} 条内容因过长被截断，顾问看到的工具输出可能不完整`);
+  return buildAdvisorPrompt({
+    mode,
+    advisorPrompt: cfg.advisorPrompt,
+    question,
+    context,
+    transcriptText: transcript.text,
+    transcriptDropped: transcript.droppedCount,
+    transcriptClipped: transcript.clippedCount,
+  });
+}
+
+function entryLabelOf(deps: AdvisorDeps, childId: string): string {
+  const record = deps.registry.get(childId);
+  return record?.provider && record?.model ? `${record.provider}/${record.model}` : "顾问";
+}
+
+function isAdvisorChild(agent: Agent): boolean {
+  try {
+    const descriptor = foldSubagentDescriptor(agent.session.snapshotEvents());
+    return typeof descriptor?.label === "string" && descriptor.label.startsWith(ADVISOR_LABEL_PREFIX);
+  } catch {
+    return false;
   }
-  if (input.signal?.aborted) throw new DOMException("Aborted", "AbortError");
-  return { content: text, thinking };
 }

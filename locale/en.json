@@ -1,7 +1,7 @@
 {
   "meta": {
     "title": "Second Opinion",
-    "description": "Ask a configured advisor model chain for a second opinion on demand; the advisor automatically sees the full conversation history.",
+    "description": "Ask a configured advisor model chain for a second opinion on demand; the advisor is a read-only native subagent that receives a bounded transcript of the current conversation, with real failure reasons surfaced on fallback.",
     "detail": "docs/DETAIL.md"
   }
 }

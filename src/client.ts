@@ -769,7 +769,7 @@ moduleLoaderWindow.__ModuleLoader__!.load({
         ];
         const fetching = busy === `discover:${entry.provider}`;
         return h(Field, { label: "模型" },
-          h("div", { style: { display: "flex", gap: 6, width: "100%" } },
+          h("div", { style: { display: "flex", gap: 6, width: "100%", minWidth: 0 } },
             h(Dropdown, { width: "100%", ariaLabel: "模型", value: entry.model, options: options.length ? options : [{ value: "", label: catalog.length ? "请选择" : "未取到模型列表" }], onChange: (e: { target: { value: string } }) => patchEntry(index, { model: e.target.value, reasoningEffort: undefined }) }),
             catalog.length === 0
               ? h("button", { style: { ...SET.btn, height: 32, whiteSpace: "nowrap", flexShrink: 0 }, type: "button", disabled: !entry.provider || busy !== null, onClick: () => void discover(entry.provider) }, fetching ? "获取中…" : "获取模型列表")
@@ -793,8 +793,11 @@ moduleLoaderWindow.__ModuleLoader__!.load({
             h("button", { style: SET.btn, type: "button", "aria-label": "上移", title: "上移", onClick: () => moveEntry(index, -1), disabled: index === 0 }, "↑"),
             h("button", { style: SET.btn, type: "button", "aria-label": "下移", title: "下移", onClick: () => moveEntry(index, 1), disabled: index === draft.chain.length - 1 }, "↓"),
             h("button", { style: SET.btn, type: "button", onClick: () => removeEntry(index) }, "删除")),
-          h("div", { style: { display: "flex", gap: 12, flexWrap: "wrap" } },
-            h(Field, { label: "显示名（可选）" }, h("input", { style: { ...SET.control, width: 150 }, placeholder: "如：架构顾问", value: entry.label ?? "", onChange: (e: React.ChangeEvent<HTMLInputElement>) => patchEntry(index, { label: e.target.value }) })),
+          // Grid (not flex): a long provider name must not squeeze the model
+          // field. Fixed name column; provider and model split the rest evenly
+          // and ellipsize instead of overflowing.
+          h("div", { style: { display: "grid", gridTemplateColumns: "minmax(130px, 160px) minmax(0, 1fr) minmax(0, 1fr)", gap: 12, alignItems: "end" } },
+            h(Field, { label: "显示名（可选）" }, h("input", { style: { ...SET.control, width: "100%", boxSizing: "border-box" }, placeholder: "如：架构顾问", value: entry.label ?? "", onChange: (e: React.ChangeEvent<HTMLInputElement>) => patchEntry(index, { label: e.target.value }) })),
             h(Field, { label: "供应商" }, h(Dropdown, { width: "100%", ariaLabel: "供应商", value: entry.provider, options: providers.length ? providers.map((p) => ({ value: p.id, label: p.name && p.name !== p.id ? `${p.id}（${p.name}）` : p.id })) : [{ value: entry.provider, label: entry.provider || "（未获取到供应商）" }], onChange: (e: { target: { value: string } }) => patchProvider(index, e.target.value) })),
             modelField(index, entry)),
           h("div", { style: { display: "flex", gap: 12, flexWrap: "wrap", marginTop: 10 } },

@@ -927,6 +927,32 @@ moduleLoaderWindow.__ModuleLoader__!.load({
             o.value === value ? h("span", { style: { color: "var(--dsw-alias-brand-primary)", flexShrink: 0 } }, "✓") : null))) : null);
     }
 
+    // ---------- settings navigation icon ----------
+    // Registered under the section's id in `settings.section.icon`; the shell
+    // keeps its default gear when a section has no icon. Line icon on the
+    // host's 24px grid: a speech bubble with a check — one consultation, one
+    // confirmed answer.
+    function AdvisorNavIcon(props: { size?: number; active?: boolean }) {
+      const size = props.size ?? 22;
+      return h(
+        "svg",
+        {
+          width: size,
+          height: size,
+          viewBox: "0 0 24 24",
+          fill: "none",
+          stroke: props.active ? "var(--dsw-alias-brand-primary)" : "currentColor",
+          strokeWidth: 1.7,
+          strokeLinecap: "round",
+          strokeLinejoin: "round",
+          "aria-hidden": true,
+          focusable: false,
+        },
+        h("path", { d: "M4 5.5h16v10.5H9l-4.5 3.5v-3.5H4z" }),
+        h("path", { d: "M8.5 10.5l2.3 2.3 4.7-4.6" }),
+      );
+    }
+
     // ---------- module ----------
     const name = "dsh-advisor-chain";
     const inject = ["uiConversation", "slots", "remote", "remote.settings", "remote.llm"];
@@ -948,7 +974,10 @@ moduleLoaderWindow.__ModuleLoader__!.load({
       ctx.slots.inject("conversation.chat.node", () =>
         ctx.slots.register({ name: "conversation.chat.node", key: "dsh-advisor-chain-legacy" }, LegacyAdvisorCardView as unknown as (props: unknown) => React.ReactElement));
       ctx.slots.inject("settings.section", () =>
-        ctx.slots.register({ name: "settings.section", id: "dsh-advisor-chain", order: 0, label: "Second Opinion" }, AdvisorSettingsTab as unknown as (props: unknown) => React.ReactElement));
+        ctx.slots.register({ name: "settings.section", id: "dsh-advisor-chain", order: 0, label: "顾问设置" }, AdvisorSettingsTab as unknown as (props: unknown) => React.ReactElement));
+      // Navigation icon for our section (same id as the section above).
+      ctx.slots.inject("settings.section.icon", () =>
+        ctx.slots.register({ name: "settings.section.icon", id: "dsh-advisor-chain" }, AdvisorNavIcon as unknown as (props: unknown) => React.ReactElement));
     }
 
     return { name, inject, apply };

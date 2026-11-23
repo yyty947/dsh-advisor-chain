@@ -56,14 +56,14 @@ export function assertRouteAllowed(host: HostServices, parent: Agent, entry: Cha
     return {
       ok: false,
       kind: "authorization",
-      message: `DSH 的「子代理模型选择」当前是关闭的，顾问无法使用与主对话不同的模型（${route}）。请到 Second Opinion 设置页点击「开启并授权」。`,
+      message: `DSH 的「子代理模型选择」当前是关闭的，顾问无法使用与主对话不同的模型（${route}）。请到 设置 → 顾问设置 点击「开启并授权」。`,
     };
   }
   if (routes.some((r) => r.provider === entry.provider && r.model === entry.model)) return { ok: true };
   return {
     ok: false,
     kind: "authorization",
-    message: `模型 ${route} 尚未授权给子代理。请到 Second Opinion 设置页点击「授权」，或在 设置 → 插件 → 子代理 的模型白名单里添加它。`,
+    message: `模型 ${route} 尚未授权给子代理。请到 设置 → 顾问设置 点击「授权」，或在 设置 → 插件 → 子代理 的模型白名单里添加它。`,
   };
 }
 

@@ -157,7 +157,7 @@ export function createSecondOpinionTool(deps: AdvisorDeps) {
       const cfg = deps.getConfig();
       const fail = (advice: string): ToolValue => ({ advice, model: "", consultId: "", dual: false, truncated: false, attempts: [], notes: [] });
       if (!cfg.enabled) return fail("Second Opinion 当前已停用（设置中可开启）。");
-      if (cfg.chain.length === 0) return fail("顾问链尚未配置任何模型。请先到 设置 → Second Opinion 添加顾问模型。");
+      if (cfg.chain.length === 0) return fail("顾问链尚未配置任何模型。请先到 设置 → 顾问设置 添加顾问模型。");
 
       const parent = exec.agent as Agent | undefined;
       if (!parent) return fail("当前执行环境没有会话上下文，无法咨询顾问。");

@@ -25,6 +25,7 @@
     "cordis.patch.yml",
     "locale",
     "docs/DETAIL.md",
+    "scripts/repair-legacy-sessions.mjs",
     "icon.svg",
     "CHANGELOG.md"
   ],

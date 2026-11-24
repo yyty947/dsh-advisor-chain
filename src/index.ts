@@ -89,7 +89,7 @@ export function apply(ctx: HostContext, _config: unknown) {
               loggedStreaks.set(sessionId, pressure.count);
               log(`hard trigger engaged: session ${sessionId} has repeated the same question ${pressure.count} times`);
             }
-            return buildSectionText(cfg, pressure, cfg.trigger.repeatThreshold, resolveLanguage(cfg.language, pressure?.text ?? ""));
+            return buildSectionText(cfg, pressure, cfg.trigger.repeatThreshold, resolveLanguage(pressure?.text ?? ""));
           },
         }),
       "dsh-advisor-chain: system prompt section",

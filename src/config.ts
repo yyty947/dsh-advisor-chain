@@ -45,7 +45,6 @@ export const Config = Schema.object({
   enabled: Schema.boolean().default(true).volatile(),
   mode: Schema.union([Schema.const("auto"), Schema.const("manual")]).default("auto").volatile().description("auto：主模型按提示规则自主咨询；manual：仅用户明确要求时咨询。"),
   contextMode: Schema.union([Schema.const("inherited"), Schema.const("standalone")]).default("inherited").volatile().description("默认咨询模式：inherited 顾问获得会话抄本；standalone 盲审，顾问只看问题与补充背景。可被工具的 mode 参数按次覆盖。"),
-  language: Schema.union([Schema.const("auto"), Schema.const("zh"), Schema.const("en")]).default("auto").volatile().description("插件输出文案的语言：auto 按用户当前消息的语言自动判断；zh / en 固定。"),
   advisorPrompt: Schema.string().default("").volatile().description("顾问的回答要求（整条链共用）；留空则按语言使用内置默认。"),
   chain: Schema.array(ChainEntryConfig).default([]).volatile().description("顾问模型链，按顺序尝试；前面的失败时顺延到下一个。"),
   followup: FollowupConfig.volatile(),
@@ -69,8 +68,6 @@ export type AdvisorConfig = {
   mode: "auto" | "manual";
   /** Default consultation mode; overridable per call via the tool's mode param. */
   contextMode: "inherited" | "standalone";
-  /** Language for plugin-produced text; `auto` infers it per call. */
-  language: "auto" | "zh" | "en";
   /** User-edited answer requirements for the advisor; empty = built-in default by language. */
   advisorPrompt: string;
   chain: ChainEntry[];
@@ -108,7 +105,6 @@ export function normalizeConfig(raw: unknown): AdvisorConfig {
     enabled: cfg.enabled !== false,
     mode: cfg.mode === "manual" ? "manual" : "auto",
     contextMode: cfg.contextMode === "standalone" ? "standalone" : "inherited",
-    language: cfg.language === "zh" || cfg.language === "en" ? cfg.language : "auto",
     advisorPrompt: typeof cfg.advisorPrompt === "string" ? cfg.advisorPrompt.trim() : "",
     chain: Array.isArray(cfg.chain)
       ? cfg.chain

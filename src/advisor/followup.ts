@@ -2,6 +2,7 @@ import type { Agent } from "@deepseek-ai/dsh-agent";
 import type { SessionEvent, SessionId } from "@deepseek-ai/dsh-session";
 import { finalAssistantOutput, foldSubagentDescriptor } from "@deepseek-ai/dsh-subagent";
 import { ADVISOR_LABEL_PREFIX, type AdvisorRegistry } from "./identify";
+import type { SessionEventLog } from "./eventlog";
 import { contentText, emptyUsage, type ChildObservation } from "./observe";
 import { buildFollowUpMessage } from "./preamble";
 import { classifySubagentError, settleOutcome, waitWithTimeout, type AbortReason, type AdvisorOutcome, type TimeoutPolicy } from "./result";
@@ -41,16 +42,20 @@ interface SessionQueryLike {
   readSession(id: string): Promise<{ events: readonly unknown[] }>;
 }
 
-function eventsOf(host: HostServices, childId: string): { events: readonly EventLike[]; live: boolean } | undefined {
+/** The child's log for a live child: the tracker's copy when it is complete, else the deprecated `snapshotEvents()` while it exists. */
+function eventsOf(host: HostServices, events: SessionEventLog | undefined, childId: string): { events: readonly EventLike[]; live: boolean } | undefined {
   const live = host.agents.get(childId as SessionId);
-  if (live) {
-    try {
-      return { events: live.session.snapshotEvents() as readonly EventLike[], live: true };
-    } catch {
-      return undefined;
-    }
+  if (!live) return undefined;
+  if (events?.has(childId) && events.isComplete(childId)) return { events: events.eventsOf(childId) as readonly EventLike[], live: true };
+  const session = live.session as { snapshotEvents?: () => readonly unknown[] };
+  if (typeof session.snapshotEvents !== "function") {
+    return events?.has(childId) ? { events: events.eventsOf(childId) as readonly EventLike[], live: true } : undefined;
   }
-  return undefined;
+  try {
+    return { events: session.snapshotEvents() as readonly EventLike[], live: true };
+  } catch {
+    return undefined;
+  }
 }
 
 async function coldEvents(host: HostServices, childId: string): Promise<readonly EventLike[] | undefined> {
@@ -81,7 +86,7 @@ export type FollowupBegin =
 export async function beginFollowUp(host: HostServices, registry: AdvisorRegistry, input: FollowupInput): Promise<FollowupBegin> {
   const childId = input.consultId;
   const lang = input.lang ?? "zh";
-  const live = eventsOf(host, childId);
+  const live = eventsOf(host, registry.events, childId);
   const events = live?.events ?? (await coldEvents(host, childId));
   if (!events) return { ok: false, kind: "other", message: t(lang, "followup.notFound") };
   const facts = threadFactsFromEvents(events);
@@ -164,7 +169,10 @@ export async function finishFollowUp(
   let text = "";
   if (live) {
     try {
-      text = contentText(finalAssistantOutput(live.session.snapshotEvents().slice(begin.fromSeq)));
+      const since = registry.events?.has(childId) ? registry.events.since(childId, begin.fromSeq) : undefined;
+      const session = live.session as { snapshotEvents?: () => readonly unknown[] };
+      const tail = since && since.length > 0 ? since : session.snapshotEvents ? (session.snapshotEvents().slice(begin.fromSeq) as readonly EventLike[]) : [];
+      text = contentText(finalAssistantOutput(tail as never));
     } catch {
       text = "";
     }

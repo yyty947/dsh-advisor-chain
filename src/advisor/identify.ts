@@ -2,6 +2,7 @@ import type { Agent } from "@deepseek-ai/dsh-agent";
 import { foldSubagentDescriptor, delegationDepthOf } from "@deepseek-ai/dsh-subagent";
 import type { SubagentRunEndInfo, SubagentRunInfo } from "@deepseek-ai/dsh-subagent";
 import { attachObservation, type ChildObservation } from "./observe";
+import type { SessionEventLog } from "./eventlog";
 import { noopLogger, type HostServices, type Logger, type SandboxControls } from "./types";
 
 /**
@@ -46,6 +47,8 @@ export interface RegistryDeps {
   depthOf?: (agent: Agent) => number;
   /** Descriptor reader; the real one folds the child's own log. */
   descriptorOf?: (child: Agent) => { label?: string } | undefined;
+  /** Live session-log tracker fed by `session/event`; preferred over the deprecated `snapshotEvents()`. */
+  events?: SessionEventLog;
   now?: () => number;
 }
 
@@ -67,6 +70,7 @@ export class AdvisorRegistry {
   private readonly log: Logger;
   readonly depthOf: (agent: Agent) => number;
   private readonly descriptorOf: (child: Agent) => { label?: string } | undefined;
+  readonly events: SessionEventLog | undefined;
   private readonly now: () => number;
 
   constructor(deps: RegistryDeps) {
@@ -74,7 +78,8 @@ export class AdvisorRegistry {
     this.sandbox = deps.sandbox;
     this.log = deps.log ?? noopLogger;
     this.depthOf = deps.depthOf ?? defaultDepthOf;
-    this.descriptorOf = deps.descriptorOf ?? defaultDescriptorOf;
+    this.events = deps.events;
+    this.descriptorOf = deps.descriptorOf ?? ((child) => this.events?.descriptorOf(String(child.id)) ?? defaultDescriptorOf(child));
     this.now = deps.now ?? Date.now;
   }
 
@@ -207,7 +212,9 @@ export class AdvisorRegistry {
       // asynchronously and may still report the delegated mode right after
       // the append. Tool layers resolve the mode per call, so by the child's
       // first tool call the projection has caught up with the logged event.
-      const logged = this.sandbox.lastModeOf?.(child.session) ?? lastLoggedModeOf(child.session);
+      // The tracked event stream is the log; `snapshotEvents()` is only a
+      // fallback for a tracker that has not seen this session.
+      const logged = this.sandbox.lastModeOf?.(child.session) ?? this.events?.lastModeOf(childId) ?? lastLoggedModeOf(child.session);
       const mode = logged !== undefined ? logged : this.sandbox.overrideOf(child.session);
       record.sandbox = mode === undefined ? "unknown" : mode === "read-only" ? "read-only" : "failed";
       if (record.sandbox === "failed") this.log(`advisor: child ${childId} sandbox is "${mode}" after requesting read-only`);
@@ -245,14 +252,16 @@ function defaultDepthOf(agent: Agent): number {
 }
 
 function defaultDescriptorOf(child: Agent): { label?: string } | undefined {
+  const session = child.session as { snapshotEvents?: () => readonly unknown[] } | undefined;
+  if (typeof session?.snapshotEvents !== "function") return undefined;
   try {
-    return foldSubagentDescriptor(child.session.snapshotEvents());
+    return foldSubagentDescriptor(session.snapshotEvents!() as never);
   } catch {
     return undefined;
   }
 }
 
-/** Mode of the last `sandbox/mode` event in the session log, if any. */
+/** Mode of the last `sandbox/mode` event in the session log, if the session still offers `snapshotEvents()`. */
 export function lastLoggedModeOf(session: { snapshotEvents?: () => readonly unknown[] } | undefined): string | undefined {
   if (!session || typeof session.snapshotEvents !== "function") return undefined;
   try {

@@ -45,4 +45,31 @@ describe("RepeatPressureTracker", () => {
     tracker.handleEvent("s1", { type: "tool/result", data: { message: {} } });
     expect(tracker.get("s1")).toBeUndefined();
   });
+
+  it("compares normalized text: case, punctuation and whitespace do not break the streak", () => {
+    const tracker = new RepeatPressureTracker();
+    tracker.handleEvent("s1", userEvent("Why doesn't this work?"));
+    tracker.handleEvent("s1", userEvent("why doesnt this work"));
+    tracker.handleEvent("s1", userEvent("  Why  doesn't this work! "));
+    expect(tracker.get("s1")?.count).toBe(3);
+    expect(tracker.get("s1")?.text).toBe("Why  doesn't this work!"); // raw text of the last message (trimmed)
+    tracker.handleEvent("s1", userEvent("为什么不工作？"));
+    tracker.handleEvent("s1", userEvent("为什么不工作"));
+    expect(tracker.get("s1")?.count).toBe(2);
+  });
+
+  it("never counts advance phrases or content-free messages", () => {
+    const tracker = new RepeatPressureTracker();
+    tracker.handleEvent("s1", userEvent("继续"));
+    tracker.handleEvent("s1", userEvent("继续"));
+    tracker.handleEvent("s1", userEvent("Please continue"));
+    tracker.handleEvent("s1", userEvent("!!!"));
+    tracker.handleEvent("s1", userEvent("好的"));
+    expect(tracker.get("s1")).toBeUndefined();
+    tracker.handleEvent("s1", userEvent("fix the bug"));
+    tracker.handleEvent("s1", userEvent("继续"));
+    expect(tracker.get("s1")).toEqual({ count: 1, text: "fix the bug" }); // the nudge neither counts nor resets
+    tracker.handleEvent("s1", userEvent("fix the bug"));
+    expect(tracker.get("s1")?.count).toBe(2);
+  });
 });

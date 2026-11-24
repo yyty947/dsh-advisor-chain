@@ -70,6 +70,9 @@ export function apply(ctx: HostContext, _config: unknown) {
 
   const systemPrompt = ctx.systemPrompt ?? (typeof ctx.get === "function" ? (ctx.get("systemPrompt") as HostContext["systemPrompt"]) : undefined);
   if (systemPrompt) {
+    // Observability for the hard trigger: log once per streak when it reaches
+    // the threshold, so the behavior can be verified without inspecting prompts.
+    const loggedStreaks = new Map<string, number>();
     ctx.effect(
       () =>
         systemPrompt.section({
@@ -81,6 +84,11 @@ export function apply(ctx: HostContext, _config: unknown) {
           text: (assembly) => {
             const cfg = liveConfig();
             const pressure = pressureTracker.get(assembly?.session?.id);
+            const sessionId = assembly?.session?.id;
+            if (sessionId && pressure && pressure.count >= cfg.trigger.repeatThreshold && loggedStreaks.get(sessionId) !== pressure.count) {
+              loggedStreaks.set(sessionId, pressure.count);
+              log(`hard trigger engaged: session ${sessionId} has repeated the same question ${pressure.count} times`);
+            }
             return buildSectionText(cfg, pressure, cfg.trigger.repeatThreshold, resolveLanguage(cfg.language, pressure?.text ?? ""));
           },
         }),

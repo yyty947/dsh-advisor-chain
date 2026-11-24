@@ -85,6 +85,7 @@ const zh = {
 
   // ---- tool results read by the main model ----
   "tool.disabled": "Second Opinion 当前已停用（设置中可开启）。",
+  "tool.cancelled": "咨询已取消：本轮被用户中止，顾问没有返回结果。",
   "tool.noChain": "顾问链尚未配置任何模型。请先到 设置 → 顾问设置 添加顾问模型。",
   "tool.noSession": "当前执行环境没有会话上下文，无法咨询顾问。",
   "tool.isAdvisor": "你已经是顾问子代理：顾问不能再咨询 second_opinion，直接给出你的意见即可。",
@@ -223,6 +224,7 @@ const en: Record<HostKey, string> = {
   "transcript.clipped": "… (clipped, {count} characters originally)",
 
   "tool.disabled": "Second Opinion is currently disabled (enable it in Settings).",
+  "tool.cancelled": "Consultation cancelled: the turn was stopped by the user and the advisor returned no result.",
   "tool.noChain": "No advisor model is configured yet. Add one under Settings → Advisor.",
   "tool.noSession": "This execution context has no conversation to advise on.",
   "tool.isAdvisor": "You are already an advisor subagent: advisors cannot call second_opinion again; just give your opinion.",

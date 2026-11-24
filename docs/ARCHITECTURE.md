@@ -73,16 +73,22 @@ src/
 
 宿主侧（系统提示段、顾问任务提示、工具结果与失败原因）没有 locale 服务，走 `src/i18n.ts` 自带字典，语言**始终按文本推断**：系统提示段看用户最近一条消息，工具调用看问题与背景（中文字符占比）。插件不提供语言设置——界面跟随 DSH，模型面向的文本跟随对话。工具的参数说明固定为英文（注册时一次写入，与宿主内置工具一致）。顾问人格为空时按语言取内置默认；用户保存过的人格优先于语言判断。
 
-## 6. 成本结构
+## 6. 成本结构：顾问 preset
 
-顾问子代理继承主代理的完整组成：整份系统提示（技能目录、全部工具说明、second_opinion 自己的使用边界）加上全部工具 schema。维护者机器上，**空白会话的首次咨询输入约 48k token，输出几百**——几乎全是继承来的组成，与抄本无关。
+顾问子代理若继承主代理的完整组成，会背上整份系统提示（技能目录、全部工具说明、second_opinion 自己的使用边界）和全部工具 schema，包括宿主级注册的 MCP 工具。维护者机器上实测（`scripts/measure-advisor-usage.mjs`，同一句一词的盲审问题）：
 
-下一版顾问 preset 的设计（待实现）：
-- 按**包名**挂载内置包，不受替换工具类插件（如 dsh-ops 改写出厂预设）影响：`tool-fs` 只开 `read` + `readImage`（`write` / `edit` / `applyPatch` 关闭），`tool-fs-search`（grep / glob），`tool-pwsh` / `tool-bash`（只读命令，可选），compaction 组（防读文件撑爆上下文）。
-- 用 `ToolRestriction` 允许名单（`read` / `read_image` / `glob` / `grep` / `pwsh`）把**继承来的**工具全部挡住——包括宿主级注册的 MCP 工具和 second_opinion 自己；本作用域注册的工具豁免。
-- 不挂：技能目录、规划、委派、todo、ask-user、web、cordis、present、office、plugin-manager。`agent-instructions`（项目的 AGENTS.md，上限 64KB）默认不挂，做成可选项。
-- 我们的系统提示段对顾问会话返回空串（按会话的 preset 判断），避免顾问看到 second_opinion 的使用边界。
-- 启动前 `ctx.agentPresets.resolve(id)`，preset 激活失败则回退为继承主对话组成并在结果里注明；设置里可强制「继承」。
+| 组成 | 输入 token | 工具 schema | 系统提示 |
+|---|---|---|---|
+| 继承 | 48,887 | 122 个 / 151,811 字符 | 9,280 字符 |
+| 精简 preset | 3,651 | 5 个 / 5,780 字符 | 6,024 字符 |
+
+preset（`src/advisor/preset.ts`）的设计：
+- 按**包名**挂载内置包，不受替换工具类插件（如 dsh-ops 改写出厂预设）影响：`tool-fs` 只开 `read` + `readImage`（`write` / `edit` / `applyPatch` 关闭），`tool-fs-search`（grep / glob），`tool-pwsh` / `tool-bash`。这些包因此是本插件的 dependency（范围与 peer 相同，pnpm 链接到宿主已有的同一版本）。
+- 工具掩码是**对全局层的 deny 名单**，不是 allow 名单：限制挂在作用域层上，顾问 agent 看到的是自己的空层 + preset 层，read / grep 与掩码同在 preset 层；allow 名单不能写本层注册的名字，`allow: []` 则会把 preset 自己的工具一并挡掉。deny 名单枚举宿主级工具（MCP、second_opinion、plugin manager…），监听 `tools/change` 动态重算，因为 MCP 工具可能在插件激活后才注册。
+- 不挂：技能目录、规划、委派、todo、ask-user、web、cordis、present、office、plugin-manager。`agent-instructions`（项目的 AGENTS.md，上限 64KB）不挂。
+- 我们的系统提示段对顾问会话返回空串（按会话记录的 preset 判断）。
+- 启动前 `ctx.agentPresets.resolve(id)`，preset 激活失败则回退为继承主对话组成，原因写进结果注记（宿主不落日志，这是唯一的可见诊断通道）；设置「顾问组成」可强制「继承」。
+- 残留：宿主级的 MCP **说明段**（Github / Stitch 的使用指引）仍会进顾问的系统提示，它们是提示段不是工具，无法按作用域裁剪；约 2k token。
 
 ## 7. 已知限制
 

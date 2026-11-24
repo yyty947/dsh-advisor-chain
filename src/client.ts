@@ -485,6 +485,7 @@ moduleLoaderWindow.__ModuleLoader__!.load({
       enabled: boolean;
       mode: "auto" | "manual";
       contextMode: "inherited" | "standalone";
+      advisorComposition: "lean" | "inherit";
       advisorPrompt: string;
       chain: DraftChainEntry[];
       followup: { maxRounds: number };
@@ -678,6 +679,7 @@ moduleLoaderWindow.__ModuleLoader__!.load({
             enabled: value.enabled !== false,
             mode: value.mode === "manual" ? "manual" : "auto",
             contextMode: value.contextMode === "standalone" ? "standalone" : "inherited",
+            advisorComposition: value.advisorComposition === "inherit" ? "inherit" : "lean",
             advisorPrompt: typeof value.advisorPrompt === "string" ? value.advisorPrompt : "",
             chain: Array.isArray(value.chain) ? value.chain : [],
             followup: { maxRounds: value.followup?.maxRounds ?? 8 },
@@ -849,6 +851,7 @@ moduleLoaderWindow.__ModuleLoader__!.load({
             enabled: draft.enabled,
             mode: draft.mode,
             contextMode: draft.contextMode,
+            advisorComposition: draft.advisorComposition,
             advisorPrompt: draft.advisorPrompt,
             chain: draft.chain.filter((e) => e.provider && e.model).map((e) => ({
               ...(e.label?.trim() ? { label: e.label } : {}),
@@ -956,7 +959,9 @@ moduleLoaderWindow.__ModuleLoader__!.load({
           h(SRow, { title: t("settings.triggerTitle"), desc: t("settings.triggerDesc") },
             h(Dropdown, { value: draft.mode, width: 240, ariaLabel: t("settings.triggerTitle"), options: [{ value: "auto", label: t("settings.triggerAuto") }, { value: "manual", label: t("settings.triggerManual") }], onChange: (e: { target: { value: string } }) => patch({ mode: e.target.value as DraftConfig["mode"] }) })),
           h(SRow, { title: t("settings.modeTitle"), desc: t("settings.modeDesc") },
-            h(Dropdown, { value: draft.contextMode, width: 240, ariaLabel: t("settings.modeTitle"), options: [{ value: "inherited", label: t("settings.modeInherited") }, { value: "standalone", label: t("settings.modeStandalone") }], onChange: (e: { target: { value: string } }) => patch({ contextMode: e.target.value as DraftConfig["contextMode"] }) })),          h("div", { style: { ...SET.groupHead, alignItems: "flex-start" } },
+            h(Dropdown, { value: draft.contextMode, width: 240, ariaLabel: t("settings.modeTitle"), options: [{ value: "inherited", label: t("settings.modeInherited") }, { value: "standalone", label: t("settings.modeStandalone") }], onChange: (e: { target: { value: string } }) => patch({ contextMode: e.target.value as DraftConfig["contextMode"] }) })),
+          h(SRow, { title: t("settings.compositionTitle"), desc: t("settings.compositionDesc") },
+            h(Dropdown, { value: draft.advisorComposition, width: 240, ariaLabel: t("settings.compositionTitle"), options: [{ value: "lean", label: t("settings.compositionLean") }, { value: "inherit", label: t("settings.compositionInherit") }], onChange: (e: { target: { value: string } }) => patch({ advisorComposition: e.target.value as DraftConfig["advisorComposition"] }) })),          h("div", { style: { ...SET.groupHead, alignItems: "flex-start" } },
             h("div", { style: { minWidth: 0 } },
               h("div", { style: SET.title }, t("settings.chainTitle")),
               h("div", { style: SET.desc }, t("settings.chainDesc"))),

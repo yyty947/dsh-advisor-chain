@@ -3,6 +3,7 @@ import { SubagentError } from "@deepseek-ai/dsh-subagent";
 import type { SubagentActivation } from "@deepseek-ai/dsh-subagent";
 import type { Agent } from "@deepseek-ai/dsh-agent";
 import { ADVISOR_LABEL_PREFIX, AdvisorRegistry } from "../src/advisor/identify";
+import { ADVISOR_PRESET_ID } from "../src/advisor/preset";
 import { attachObservation, emptyUsage, type ChildObservation } from "../src/advisor/observe";
 import { beginFollowUp, threadFactsFromEvents } from "../src/advisor/followup";
 import { buildAdvisorPrompt } from "../src/advisor/preamble";
@@ -379,6 +380,28 @@ describe("startAdvisor", () => {
     expect(spec).toMatchObject({ provider: "spawn", label: `${ADVISOR_LABEL_PREFIX}z-ai/glm-5.4`, delivery: "caller", maxDepth: 1, agentOptions: { provider: "z-ai", model: "glm-5.4" } });
     expect(registry.get("child-1")?.consultId).toBe(""); // the tool records consult_id once the child wins
   });
+  it("starts the child on the lean preset when the preset is healthy", async () => {
+    const host = presetHost({ resolve: async () => ({ id: ADVISOR_PRESET_ID }) });
+    const registry = new AdvisorRegistry({ host, sandbox: sandboxFn(), descriptorOf: () => ({ label: `${ADVISOR_LABEL_PREFIX}x` }) });
+    registry.install();
+    const r = await startAdvisor(host, registry, { parent: parent(), signal: new AbortController().signal, entry: { provider: "z-ai", model: "glm-5.4" }, entryLabel: "x", promptText: "p", mode: "standalone", preset: ADVISOR_PRESET_ID });
+    expect(r).toMatchObject({ ok: true, composition: "lean" });
+    expect((host.subagents.startActivation as ReturnType<typeof vi.fn>).mock.calls[0][0]).toMatchObject({ agentPreset: ADVISOR_PRESET_ID });
+  });
+  it("falls back to the inherited composition and reports why when the preset is broken or unavailable", async () => {
+    const host = presetHost({ resolve: async () => ({ id: ADVISOR_PRESET_ID, broken: "tool-fs: import failed" }) });
+    const registry = new AdvisorRegistry({ host, sandbox: sandboxFn(), descriptorOf: () => ({ label: `${ADVISOR_LABEL_PREFIX}x` }) });
+    registry.install();
+    const input = { parent: parent(), signal: new AbortController().signal, entry: { provider: "z-ai", model: "glm-5.4" }, entryLabel: "x", promptText: "p", mode: "standalone" as const, preset: ADVISOR_PRESET_ID };
+    const r = await startAdvisor(host, registry, input);
+    expect(r).toMatchObject({ ok: true, composition: "inherit", presetFallbackReason: "tool-fs: import failed" });
+    const spec = (host.subagents.startActivation as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect("agentPreset" in spec).toBe(false);
+    // No preset service at all: same fallback, still consults.
+    host.optional = vi.fn(() => undefined) as never;
+    const r2 = await startAdvisor(host, registry, input);
+    expect(r2).toMatchObject({ ok: true, presetFallbackReason: "unavailable" });
+  });
   it("refuses before starting when the route is not authorized", async () => {
     const host = fakeHost({ subagentModelSelection: { allowedRoutes: () => [] } });
     const registry = new AdvisorRegistry({ host, sandbox: sandboxFn() });
@@ -410,6 +433,18 @@ describe("startAdvisor", () => {
 
 function sandboxFn() {
   return { setSandboxMode: vi.fn(), overrideOf: vi.fn((): string | undefined => "read-only") };
+}
+
+/** A host whose `agentPresets` service answers `resolve` with the given implementation and whose spawn succeeds as child-1. */
+function presetHost(agentPresets: { resolve: (id: string) => Promise<{ id: string; broken?: string }> }) {
+  const host = fakeHost();
+  host.optional = vi.fn((name: string) => (name === "agentPresets" ? agentPresets : undefined)) as never;
+  host.agents.get = vi.fn(() => fakeAgent("child-1"));
+  host.subagents.startActivation = vi.fn(async () => {
+    host.emit("subagent/start", { runId: "r", provider: "spawn", parentSessionId: "parent-1", id: "child-1", local: true });
+    return { childId: "child-1", name: "agent-1", result: new Promise(() => {}), dispose: vi.fn(async () => {}) } as unknown as SubagentActivation;
+  });
+  return host;
 }
 
 describe("follow-up validation", () => {

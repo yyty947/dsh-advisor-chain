@@ -6,6 +6,7 @@ import { buildTranscript, type TranscriptMessageLike } from "./transcript";
 import type { AdvisorConfig, ChainEntry } from "./config";
 import { entryName } from "./chain";
 import { ADVISOR_LABEL_PREFIX, type AdvisorRegistry } from "./advisor/identify";
+import { ADVISOR_PRESET_ID } from "./advisor/preset";
 import { buildAdvisorPrompt } from "./advisor/preamble";
 import { startAdvisor, type Refusal } from "./advisor/start";
 import { beginFollowUp, finishFollowUp } from "./advisor/followup";
@@ -240,10 +241,24 @@ export function createSecondOpinionTool(deps: AdvisorDeps) {
       const runEntry = async (entry: ChainEntry, promptText: string): Promise<RunResult> => {
         const label = entryName(entry);
         const startedAt = Date.now();
-        const started = await startAdvisor(deps.host, deps.registry, { parent, signal: exec.signal, entry, entryLabel: label, promptText, mode, lang });
+        const started = await startAdvisor(deps.host, deps.registry, {
+          parent,
+          signal: exec.signal,
+          entry,
+          entryLabel: label,
+          promptText,
+          mode,
+          lang,
+          ...(cfg.advisorComposition === "lean" ? { preset: ADVISOR_PRESET_ID } : {}),
+        });
         if (!started.ok) return started;
         live.push(started.activation);
         if (started.effortIgnored) notes.push(t(prompt.lang, "tool.effortIgnored", { effort: entry.reasoningEffort, route: `${entry.provider}/${entry.model}` }));
+        if (started.presetFallbackReason) {
+          log(`advisor preset unavailable, inheriting the parent composition: ${started.presetFallbackReason}`);
+          const reason = started.presetFallbackReason.replace(/\s+/g, " ").slice(0, 240);
+          notes.push(t(lang, "tool.presetFallback", { reason }));
+        }
         const childId = String(started.activation.childId);
         try {
           const { value, abortedBy } = await waitWithTimeout({

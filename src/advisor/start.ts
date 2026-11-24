@@ -4,6 +4,7 @@ import type { SubagentActivation } from "@deepseek-ai/dsh-subagent";
 import type { ChainEntry } from "../config";
 import { t, type Lang } from "../i18n";
 import { advisorLabel, type AdvisorChildRecord, type AdvisorRegistry } from "./identify";
+import { checkAdvisorPreset, type PresetRegistryLike } from "./preset";
 import type { ChildObservation } from "./observe";
 import { classifySubagentError, type FailureClass } from "./result";
 import type { HostServices } from "./types";
@@ -96,11 +97,13 @@ export interface StartInput {
   entryLabel: string;
   promptText: string;
   mode: "inherited" | "standalone";
+  /** Lean advisor preset to start the child with; undefined = inherit the parent's composition. */
+  preset?: string;
   lang?: Lang;
 }
 
 export type StartResult =
-  | { ok: true; activation: SubagentActivation; observation: ChildObservation; record: AdvisorChildRecord; effortIgnored: boolean }
+  | { ok: true; activation: SubagentActivation; observation: ChildObservation; record: AdvisorChildRecord; effortIgnored: boolean; composition: "lean" | "inherit"; presetFallbackReason?: string }
   | Refusal;
 
 /** Start one advisor child under `parent` as a read-only spawn with caller delivery. */
@@ -112,6 +115,15 @@ export async function startAdvisor(host: HostServices, registry: AdvisorRegistry
   if (!route.ok) return route;
   const options = await resolveEntryOptions(host, input.entry, lang);
   if (!options.ok) return options;
+  // The lean composition is best-effort: an unregistered or broken preset
+  // must not fail the consultation, so fall back to the inherited composition and report it.
+  let preset: string | undefined;
+  let presetFallbackReason: string | undefined;
+  if (input.preset) {
+    const check = await checkAdvisorPreset(host.optional<PresetRegistryLike>("agentPresets"), (m) => host.log?.(m));
+    if (check.ok) preset = check.preset;
+    else presetFallbackReason = check.reason;
+  }
 
   registry.notePendingStart(parentId);
   let activation: SubagentActivation;
@@ -124,6 +136,7 @@ export async function startAdvisor(host: HostServices, registry: AdvisorRegistry
       signal: input.signal,
       delivery: "caller",
       agentOptions: options.agentOptions,
+      ...(preset ? { agentPreset: preset } : {}),
       // The advisor may run, but nothing may be delegated from inside it.
       maxDepth: registry.depthOf(parent) + 1,
     });
@@ -148,5 +161,5 @@ export async function startAdvisor(host: HostServices, registry: AdvisorRegistry
     await activation.dispose().catch(() => {});
     return { ok: false, kind: "infrastructure", message: t(lang, record.sandbox === "failed" ? "start.sandboxFailed" : "start.unrecognized") };
   }
-  return { ok: true, activation, observation, record, effortIgnored: options.effortIgnored };
+  return { ok: true, activation, observation, record, effortIgnored: options.effortIgnored, composition: preset ? "lean" : "inherit", ...(presetFallbackReason ? { presetFallbackReason } : {}) };
 }

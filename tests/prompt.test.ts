@@ -7,6 +7,8 @@ const base = {
   mode: "auto" as const,
   contextMode: "inherited" as const,
   advisorPrompt: "custom prompt",
+  advisorComposition: "lean" as const,
+  presetRole: false,
   chain: [{ provider: "p", model: "m" }],
   followup: { maxRounds: 8 },
   legacyNoticeDismissed: false,

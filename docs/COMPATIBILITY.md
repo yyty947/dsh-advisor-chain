@@ -16,6 +16,8 @@ DSH 几乎每天发版，且多为预发布。每次升级宿主后、以及每�
 | 8 | `remote.settings.update` 为 merge 语义、数组整体替换；`SettingsConflictError` 文案 | `dsh-settings/src/index.ts` | 设置页保存 / 授权异常 |
 | 9 | `settings.section.icon` slot 存在 | 同 7 | 侧栏回退默认齿轮（无害） |
 | 10 | `engines.dsh` 用 `semver.satisfies(v, range, { includePrerelease: true })` 评估 | `dsh-app-boot` 源码 | 范围判断偏差；跑 `node scripts/verify-peer-range.mjs` |
+| 11 | 宿主的 locale 服务：`ctx.locale.register(ns, { zh, en, … })` / `bind(ns)`；`settings.section` 注册项的 `label` 可为 thunk、`locale` 选项触发重渲染 | `dsh-client-locale/src/client/index.ts` | 客户端文案回退为中文 |
+| 12 | 是否出现了删除会话的公开 API（目前持久化服务只有 `create / open / stat / list`） | `subsystems/persistence.md` 的 `SessionPersistence` 表 | 出现后可做顾问子会话清理（见 CHANGELOG 计划） |
 
 ## 2. 冒烟（装上新宿主后，在短会话里做）
 

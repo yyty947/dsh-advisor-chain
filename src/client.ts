@@ -961,7 +961,9 @@ moduleLoaderWindow.__ModuleLoader__!.load({
           h(SRow, { title: t("settings.modeTitle"), desc: t("settings.modeDesc") },
             h(Dropdown, { value: draft.contextMode, width: 240, ariaLabel: t("settings.modeTitle"), options: [{ value: "inherited", label: t("settings.modeInherited") }, { value: "standalone", label: t("settings.modeStandalone") }], onChange: (e: { target: { value: string } }) => patch({ contextMode: e.target.value as DraftConfig["contextMode"] }) })),
           h(SRow, { title: t("settings.compositionTitle"), desc: t("settings.compositionDesc") },
-            h(Dropdown, { value: draft.advisorComposition, width: 240, ariaLabel: t("settings.compositionTitle"), options: [{ value: "lean", label: t("settings.compositionLean") }, { value: "inherit", label: t("settings.compositionInherit") }], onChange: (e: { target: { value: string } }) => patch({ advisorComposition: e.target.value as DraftConfig["advisorComposition"] }) })),          h("div", { style: { ...SET.groupHead, alignItems: "flex-start" } },
+            // Wider than the other rows: the menu carries a check column and
+            // the English options are long, so a 240 trigger lets the menu overrun the column.
+            h(Dropdown, { value: draft.advisorComposition, width: 300, ariaLabel: t("settings.compositionTitle"), options: [{ value: "lean", label: t("settings.compositionLean") }, { value: "inherit", label: t("settings.compositionInherit") }], onChange: (e: { target: { value: string } }) => patch({ advisorComposition: e.target.value as DraftConfig["advisorComposition"] }) })),          h("div", { style: { ...SET.groupHead, alignItems: "flex-start" } },
             h("div", { style: { minWidth: 0 } },
               h("div", { style: SET.title }, t("settings.chainTitle")),
               h("div", { style: SET.desc }, t("settings.chainDesc"))),

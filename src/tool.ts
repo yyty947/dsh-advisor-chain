@@ -211,6 +211,13 @@ export function createSecondOpinionTool(deps: AdvisorDeps) {
       const cfg = deps.getConfig();
       const lang = resolveLanguage(`${args.question ?? ""}\n${args.context ?? ""}\n${args.follow_up ?? ""}`);
       const fail = (message: string): ToolValue => ({ advice: message, model: "", consultId: "", dual: false, truncated: false, attempts: [], notes: [] });
+      // When the user stops the turn, the host aborts `exec.signal` with a reason
+      // that is a plain object; rethrowing it verbatim shows the user "[object Object]".
+      // (The explicit variable type lets TypeScript treat a call as a `never` return.)
+      const cancelled: (error: unknown) => never = (error) => {
+        if (!exec.signal.aborted) throw error;
+        throw new Error(t(lang, "tool.cancelled"));
+      };
       if (!cfg.enabled) return fail(t(lang, "tool.disabled"));
       if (cfg.chain.length === 0) return fail(t(lang, "tool.noChain"));
 
@@ -235,7 +242,12 @@ export function createSecondOpinionTool(deps: AdvisorDeps) {
         const record = deps.registry.get(args.consult_id);
         const entryTimeout = record ? cfg.chain.find((e) => e.provider === record.provider && e.model === record.model)?.timeoutMs : undefined;
         const startedAt = Date.now();
-        const outcome = await finishFollowUp(deps.host, deps.registry, begin, { timeoutMs: entryTimeout ?? cfg.limits.defaultTimeoutMs }, parent, exec.signal);
+        let outcome: AdvisorOutcome;
+        try {
+          outcome = await finishFollowUp(deps.host, deps.registry, begin, { timeoutMs: entryTimeout ?? cfg.limits.defaultTimeoutMs }, parent, exec.signal);
+        } catch (error) {
+          cancelled(error);
+        }
         const attempts: AttemptRecord[] = [{ label: t(lang, "tool.followUpLabel"), ok: outcome.ok, ...(outcome.failure ? { reason: outcome.failure } : {}) }];
         if (!outcome.ok) return { advice: t(lang, "tool.followUpFailed", { reason: outcome.failure }), model: "", consultId: args.consult_id, dual: false, truncated: false, attempts, notes: [], round: begin.round };
         const notes = outcome.truncated ? [t(lang, "tool.followUpTruncated")] : [];
@@ -301,7 +313,7 @@ export function createSecondOpinionTool(deps: AdvisorDeps) {
           return { ...outcome, childId, ...(usage ? { usage } : {}) };
         } catch (error) {
           // Caller cancellation is not a failure of this entry.
-          if (exec.signal.aborted) throw error;
+          if (exec.signal.aborted) cancelled(error);
           // A rejected activation result (infrastructure fault) or a child that
           // never settled: route it through the same classification table so the
           // chain can fall through (model class) or stop with an actionable message.
@@ -413,7 +425,7 @@ export function createSecondOpinionTool(deps: AdvisorDeps) {
         };
       } catch (error) {
         await Promise.allSettled(live.map((a) => a.dispose()));
-        throw error;
+        cancelled(error);
       } finally {
         // Successful children settle on their own; dispose anything left only on abnormal exits.
         if (exec.signal.aborted) await Promise.allSettled(live.map((a) => a.dispose()));

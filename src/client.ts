@@ -3,6 +3,12 @@
 // The web ModuleLoader evaluates this bundle and passes a `require` shim that
 // resolves shared client modules (react) from the browser module table, so
 // react is taken from the factory argument instead of a bundled import.
+//
+// All user-facing copy goes through `t()` (see ./client/i18n.ts): the
+// dictionaries are registered with the host's locale service, which resolves
+// the active language and re-renders the outlets registered with `locale: NS`.
+
+import { CLIENT_DICTIONARIES, CLIENT_NS, fallbackTranslate, type Translate } from "./client/i18n";
 
 interface ModuleLoaderGlobal {
   __ModuleLoader__?: {
@@ -19,6 +25,8 @@ moduleLoaderWindow.__ModuleLoader__!.load({
     const useState = React.useState;
     const useEffect = React.useEffect;
     const useRef = React.useRef;
+    /** Translator; replaced by the host-bound one once the locale service registers our namespace. */
+    let t: Translate = fallbackTranslate;
 
     // ---------- shared styles (theme tokens with literal fallbacks) ----------
     // Radii follow the DSH radius scale: controls R12 (--dsw-radius-md),
@@ -191,7 +199,7 @@ moduleLoaderWindow.__ModuleLoader__!.load({
     function Fold({ title, children, defaultOpen = false }: { title: string; children?: React.ReactNode; defaultOpen?: boolean }) {
       const [open, setOpen] = useState(defaultOpen);
       return h("div", null,
-        h("button", { style: toggleStyle, onClick: () => setOpen(!open), type: "button" }, `${open ? "▾" : "▸"} ${title}`),
+        h("button", { style: toggleStyle, onClick: () => setOpen(!open), type: "button" }, `${open ? t("common.foldOpen") : t("common.foldClosed")} ${title}`),
         open ? h("div", { style: { whiteSpace: "pre-wrap", ...smallStyle, marginTop: 4 } }, children) : null);
     }
 
@@ -312,31 +320,31 @@ moduleLoaderWindow.__ModuleLoader__!.load({
       const messages = data.messages ?? [];
       const followUps = data.followUps ?? [];
       const statusBadge = failed ? badgeStyle("var(--dsw-alias-state-error-primary)") : running ? badgeStyle("var(--dsw-alias-state-warn-primary)") : badgeStyle("var(--dsw-alias-state-success-primary)");
-      const statusText = failed ? "失败" : running ? "咨询中…" : "完成";
+      const statusText = failed ? t("card.statusFailed") : running ? t("card.statusRunning") : t("card.statusDone");
       return h("div", { style: cardStyle },
         h("div", null,
-          h("span", { style: labelStyle }, "Second Opinion 咨询"),
-          h("span", { style: subtleBadgeStyle }, "旧版记录"),
+          h("span", { style: labelStyle }, t("card.title")),
+          h("span", { style: subtleBadgeStyle }, t("legacy.badge")),
           h("span", { style: statusBadge }, statusText),
           messages.map((m) => h("span", { key: m.attemptIndex, style: badgeStyle("var(--dsw-alias-brand-primary)") }, m.model)),
-          data.truncated ? h("span", { style: badgeStyle("var(--dsw-alias-state-warn-primary)") }, "已截断") : null),
+          data.truncated ? h("span", { style: badgeStyle("var(--dsw-alias-state-warn-primary)") }, t("card.truncated")) : null),
         h("div", { style: { fontWeight: 600, margin: "6px 0 2px" } }, data.question),
         data.context ? h("div", null,
-          h("button", { style: toggleStyle, type: "button", onClick: () => setContextOpen(!contextOpen) }, `${contextOpen ? "▾" : "▸"} 补充背景`),
+          h("button", { style: toggleStyle, type: "button", onClick: () => setContextOpen(!contextOpen) }, `${contextOpen ? t("common.foldOpen") : t("common.foldClosed")} ${t("card.contextToggle")}`),
           contextOpen ? h("div", { style: { whiteSpace: "pre-wrap", ...smallStyle, marginTop: 4 } }, data.context) : null) : null,
-        messages.length > 0 && messages.some((m) => m.thinking) ? h(Fold, { title: "顾问思考过程" }, messages.map((m) => m.thinking).filter(Boolean).join("\n\n")) : null,
+        messages.length > 0 && messages.some((m) => m.thinking) ? h(Fold, { title: t("legacy.thinking") }, messages.map((m) => m.thinking).filter(Boolean).join("\n\n")) : null,
         messages.length > 0
           ? h("div", { style: { display: "flex", gap: 12, flexWrap: "wrap", marginTop: 6 } },
               messages.map((m) => h("div", { key: m.attemptIndex, style: { flex: "1 1 240px", minWidth: 240, border: "1px solid var(--dsw-alias-border-l1)", borderRadius: R.lg, padding: "6px 8px" } },
                 h("div", { style: { ...smallStyle, marginBottom: 4 } }, m.label || m.model),
                 h("div", null, renderMarkdown(m.content)))))
-          : running ? h("div", { style: { whiteSpace: "pre-wrap", marginTop: 6 } }, data.liveContent ? data.liveContent + "▍" : `正在咨询 ${data.chain?.[data.currentAttempt]?.label ?? ""} …`) : null,
+          : running ? h("div", { style: { whiteSpace: "pre-wrap", marginTop: 6 } }, data.liveContent ? data.liveContent + "▍" : t("legacy.consulting", { label: data.chain?.[data.currentAttempt]?.label ?? "" })) : null,
         followUps.map((f, i) => h("div", { key: i, style: { marginTop: 10, paddingTop: 8, borderTop: "0.5px solid var(--dsw-alias-border-l1)" } },
-          h("div", { style: { fontWeight: 600, ...smallStyle } }, `追问 ${i + 1}：${f.text}`),
-          h("div", null, f.answer === undefined ? h("span", { style: smallStyle }, "思考中…") : renderMarkdown(f.answer)))),
+          h("div", { style: { fontWeight: 600, ...smallStyle } }, t("legacy.followUp", { n: i + 1, text: f.text })),
+          h("div", null, f.answer === undefined ? h("span", { style: smallStyle }, t("legacy.thinkingEllipsis")) : renderMarkdown(f.answer)))),
         data.attempts?.length ? h("div", { style: { marginTop: 8, ...smallStyle } },
-          "尝试记录：",
-          data.attempts.map((attempt, i) => h("span", { key: i }, i > 0 ? " → " : "", attempt.ok ? "✓" : "✗", attempt.label, attempt.ok || !attempt.error ? "" : `（${attempt.error}）`))) : null);
+          t("card.attempts"),
+          data.attempts.map((attempt, i) => h("span", { key: i }, i > 0 ? " → " : "", attempt.ok ? t("common.okMark") : t("common.failMark"), attempt.label, attempt.ok || !attempt.error ? "" : `（${attempt.error}）`))) : null);
     }
 
     // ---------- toolview card for second_opinion ----------
@@ -353,6 +361,7 @@ moduleLoaderWindow.__ModuleLoader__!.load({
       round?: number;
       attempts?: Array<{ label: string; ok: boolean; reason?: string }>;
       notes?: string[];
+      usage?: { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number; durationMs: number };
     }
     interface ToolBlock {
       kind?: string;
@@ -431,30 +440,36 @@ moduleLoaderWindow.__ModuleLoader__!.load({
       const failed = !running && (block?.isError === true || (attempts.length > 0 && okCount === 0));
       const truncated = meta?.truncated === true;
       const statusBadge = running ? badgeStyle("var(--dsw-alias-state-warn-primary)") : failed ? badgeStyle("var(--dsw-alias-state-error-primary)") : badgeStyle("var(--dsw-alias-state-success-primary)");
-      const statusText = running ? "咨询中…" : failed ? "失败" : "完成";
+      const statusText = running ? t("card.statusRunning") : failed ? t("card.statusFailed") : t("card.statusDone");
       const models = (meta?.model ?? "").split(" + ").filter(Boolean);
       const text = contentText(block);
       const isFollowUp = (meta?.round ?? 0) >= 1 || (!!args.consult_id && !args.question);
-      const title = isFollowUp ? (meta?.round ? `追问 ${meta.round}` : "追问") : "Second Opinion 咨询";
+      const title = isFollowUp ? (meta?.round ? t("card.followUpTitle", { round: meta.round }) : t("card.followUpTitlePlain")) : t("card.title");
       const mode = meta?.mode ?? args.mode;
       return h("div", { style: cardStyle, "data-dsh-advisor": "card" },
         h("div", { style: { display: "flex", alignItems: "center", flexWrap: "wrap", gap: 4 } },
           h("span", { style: labelStyle }, title),
           h("span", { style: statusBadge }, statusText),
-          mode ? h("span", { style: subtleBadgeStyle }, mode === "standalone" ? "盲审" : "继承") : null,
+          mode ? h("span", { style: subtleBadgeStyle }, mode === "standalone" ? t("card.modeStandalone") : t("card.modeInherited")) : null,
           models.map((m, i) => h("span", { key: i, style: badgeStyle("var(--dsw-alias-brand-primary)") }, m)),
-          truncated ? h("span", { style: badgeStyle("var(--dsw-alias-state-warn-primary)") }, "已截断") : null),
+          truncated ? h("span", { style: badgeStyle("var(--dsw-alias-state-warn-primary)") }, t("card.truncated")) : null),
         question ? h("div", { style: { fontWeight: 600, margin: "6px 0 2px" } }, question) : null,
         context ? h("div", null,
-          h("button", { style: toggleStyle, type: "button", onClick: () => setContextOpen(!contextOpen) }, `${contextOpen ? "▾" : "▸"} 补充背景`),
+          h("button", { style: toggleStyle, type: "button", onClick: () => setContextOpen(!contextOpen) }, `${contextOpen ? t("common.foldOpen") : t("common.foldClosed")} ${t("card.contextToggle")}`),
           contextOpen ? h("div", { style: { whiteSpace: "pre-wrap", ...smallStyle, marginTop: 4 } }, context) : null) : null,
-        running ? h("div", { style: smallStyle }, "顾问正在只读审阅，回答完成后显示在这里（过程可在子代理面板查看）") : null,
+        running ? h("div", { style: smallStyle }, t("card.runningHint")) : null,
         attempts.length ? h("div", { style: { marginTop: 8, ...smallStyle } },
-          "尝试记录：",
-          attempts.map((a, i) => h("span", { key: i, style: a.ok ? okStyle : errorStyle }, i > 0 ? " → " : "", a.ok ? "✓ " : "✗ ", a.label, !a.ok && a.reason ? `（${a.reason.length > 300 ? a.reason.slice(0, 300) + "…" : a.reason}）` : ""))) : null,
+          t("card.attempts"),
+          attempts.map((a, i) => h("span", { key: i, style: a.ok ? okStyle : errorStyle }, i > 0 ? " → " : "", a.ok ? `${t("common.okMark")} ` : `${t("common.failMark")} `, a.label, !a.ok && a.reason ? `（${a.reason.length > 300 ? a.reason.slice(0, 300) + "…" : a.reason}）` : ""))) : null,
         (meta?.notes ?? []).length ? h("ul", { style: { ...warnStyle, margin: "6px 0 0", paddingLeft: 18 } }, meta!.notes!.map((n, i) => h("li", { key: i }, n))) : null,
+        meta?.usage ? h("div", { style: smallStyle }, t("card.usage", {
+          input: meta.usage.inputTokens + meta.usage.cacheReadTokens + meta.usage.cacheWriteTokens,
+          output: meta.usage.outputTokens,
+          cached: meta.usage.cacheReadTokens + meta.usage.cacheWriteTokens > 0 ? t("card.usageCached", { cached: meta.usage.cacheReadTokens + meta.usage.cacheWriteTokens }) : "",
+          duration: t("card.usageSeconds", { s: Math.max(1, Math.round(meta.usage.durationMs / 1000)) }),
+        })) : null,
         !running && text ? h("div", { style: { marginTop: 2 } }, renderMarkdown(text)) : null,
-        !running && !text && block?.error ? h("div", { style: errorStyle }, block.error.reason ?? block.error.code ?? block.error.name ?? "工具调用失败") : null);
+        !running && !text && block?.error ? h("div", { style: errorStyle }, block.error.reason ?? block.error.code ?? block.error.name ?? t("card.toolFailed")) : null);
     }
 
     // ---------- settings tab ----------
@@ -470,6 +485,7 @@ moduleLoaderWindow.__ModuleLoader__!.load({
       enabled: boolean;
       mode: "auto" | "manual";
       contextMode: "inherited" | "standalone";
+      language: "auto" | "zh" | "en";
       advisorPrompt: string;
       chain: DraftChainEntry[];
       followup: { maxRounds: number };
@@ -496,8 +512,8 @@ moduleLoaderWindow.__ModuleLoader__!.load({
     interface RemoteEnvelope<T> { ok: boolean; value?: T; error?: { message?: string; code?: string } }
     function unwrap<T>(response: RemoteEnvelope<T> | undefined, what: string): T {
       if (response && response.ok && response.value !== undefined) return response.value;
-      const detail = response?.error?.code ? `${response.error.code}：${response.error.message ?? ""}` : response?.error?.message ?? "远程调用返回异常";
-      throw new Error(`${what}失败：${detail}`);
+      const detail = response?.error?.code ? `${response.error.code}：${response.error.message ?? ""}` : response?.error?.message ?? t("common.remoteAbnormal");
+      throw new Error(t("common.remoteFailed", { what, detail }));
     }
     function getRemote(ctx: unknown): RemoteLike | undefined {
       const candidate = ctx as { remote?: RemoteLike; get?: (key: string) => unknown };
@@ -651,18 +667,19 @@ moduleLoaderWindow.__ModuleLoader__!.load({
         if (!opts?.silent) { setMsg(""); setError(""); }
         try {
           const remote = getRemote(currentCtx);
-          if (!remote) { setError("当前环境没有 remote 服务，无法读写配置。"); return; }
-          const desc = unwrap(await remote.settings.describe(), "读取设置");
+          if (!remote) { setError(t("common.remoteMissing")); return; }
+          const desc = unwrap(await remote.settings.describe(), t("common.readSettings"));
           const namespaces = Array.isArray(desc?.namespaces) ? desc.namespaces : [];
           setAllNamespaces(namespaces);
           readAllow(namespaces);
           const ns = namespaces.find((n) => n.ns === NS);
-          if (!ns) { setError("未找到本插件的配置命名空间（插件可能未启用或未安装完成）。"); return; }
+          if (!ns) { setError(t("common.nsMissing")); return; }
           const value = ns.value as Partial<DraftConfig>;
           const next: DraftConfig = {
             enabled: value.enabled !== false,
             mode: value.mode === "manual" ? "manual" : "auto",
             contextMode: value.contextMode === "standalone" ? "standalone" : "inherited",
+            language: value.language === "zh" || value.language === "en" ? value.language : "auto",
             advisorPrompt: typeof value.advisorPrompt === "string" ? value.advisorPrompt : "",
             chain: Array.isArray(value.chain) ? value.chain : [],
             followup: { maxRounds: value.followup?.maxRounds ?? 8 },
@@ -723,11 +740,11 @@ moduleLoaderWindow.__ModuleLoader__!.load({
           const remote = getRemote(currentCtx)!;
           const confs = await remote.llm.listConfigurableProviders().catch(() => undefined);
           const settingsNs = confs && confs.ok && Array.isArray(confs.value) ? confs.value.find((c) => c.provider === provider)?.settingsNs : undefined;
-          const found = settingsNs ? unwrap(await remote.llm.discoverModels(settingsNs, { provider }), "获取模型列表") : [];
+          const found = settingsNs ? unwrap(await remote.llm.discoverModels(settingsNs, { provider }), t("entry.discover")) : [];
           setDiscovered((d) => ({ ...d, [provider]: found.map((m) => m.id) }));
-          setMsg(found.length ? `已获取「${provider}」的 ${found.length} 个模型，可在下拉中选择。` : `没有取到「${provider}」的模型列表：该供应商可能需要先在 设置 → 模型 里登录或配置。`);
+          setMsg(found.length ? t("entry.discoveredCount", { provider, count: found.length }) : t("entry.discoveredNone", { provider }));
         } catch (e) {
-          setError(`获取模型列表失败：${e instanceof Error ? e.message : String(e)}`);
+          setError(t("entry.discoverFailed", { message: e instanceof Error ? e.message : String(e) }));
         } finally {
           setBusy(null);
         }
@@ -741,33 +758,33 @@ moduleLoaderWindow.__ModuleLoader__!.load({
       };
 
       const statusOf = (entry: DraftChainEntry): EntryStatus => {
-        if (!entry.provider) return { kind: "provider-missing", text: "请选择供应商。" };
+        if (!entry.provider) return { kind: "provider-missing", text: t("status.pickProvider") };
         if (providers.length > 0 && !providers.some((p) => p.id === entry.provider)) {
-          return { kind: "provider-missing", text: `DSH 里没有叫「${entry.provider}」的供应商。请到 设置 → 模型 检查或重新添加，然后回来改选。` };
+          return { kind: "provider-missing", text: t("status.providerMissingDetail", { provider: entry.provider }) };
         }
         const catalog = catalogOf(entry.provider);
-        if (!entry.model) return { kind: "model-unknown", text: "请选择模型。" };
+        if (!entry.model) return { kind: "model-unknown", text: t("status.pickModel") };
         if (catalog.length > 0 && !catalog.some((m) => m.id === entry.model)) {
-          return { kind: "model-unknown", text: `模型「${entry.model}」不在该供应商的模型列表里。请到 设置 → 模型 添加，或在这里改选。` };
+          return { kind: "model-unknown", text: t("status.modelUnknownDetail", { model: entry.model }) };
         }
         if (catalog.length === 0) {
-          return { kind: "catalog-unknown", text: `未取到「${entry.provider}」的模型列表（登录型账号的模型不在配置文件里）。已填写的模型会在调用时校验；也可以点「获取模型列表」再试。` };
+          return { kind: "catalog-unknown", text: t("status.catalogUnknownDetail", { provider: entry.provider }) };
         }
-        if (!allow.present) return { kind: "ok", text: "当前 DSH 组合没有子代理模型白名单，可直接使用。" };
+        if (!allow.present) return { kind: "ok", text: t("status.noAllowlist") };
         if (!allow.enabled) {
-          return { kind: "selection-off", text: "DSH 的「子代理模型选择」是关闭的，顾问无法使用和主对话不同的模型。「开启并授权」会打开它并把上面的模型加入白名单。" };
+          return { kind: "selection-off", text: t("status.selectionOffDetail") };
         }
         if (!allow.routes.some((r) => r.provider === entry.provider && r.model === entry.model)) {
           const p = providers.find((x) => x.id === entry.provider);
-          return { kind: "unauthorized", text: `这个模型还没授权给子代理。点「授权」即可——会把「${entry.provider} / ${entry.model}」写进 DSH 的子代理模型白名单${p?.name ? `（${p.name}）` : ""}。` };
+          return { kind: "unauthorized", text: t("status.unauthorizedDetail", { route: `${entry.provider} / ${entry.model}`, name: p?.name ? t("status.unauthorizedName", { name: p.name }) : "" }) };
         }
         if (entry.reasoningEffort) {
           const declared = catalog.find((m) => m.id === entry.model)?.efforts ?? [];
           if (declared.length === 0) {
-            return { kind: "effort-undeclared", text: `模型 ${entry.model} 没有声明推理等级，档位「${entry.reasoningEffort}」会被忽略。到 设置 → 模型 → 编辑该供应商 → 自定义设置 → 模型选项 → 推理等级 开启，或把档位留空。` };
+            return { kind: "effort-undeclared", text: t("status.effortUndeclaredNone", { model: entry.model, effort: entry.reasoningEffort }) };
           }
           if (!declared.includes(entry.reasoningEffort)) {
-            return { kind: "effort-undeclared", text: `模型 ${entry.model} 声明的推理等级是 ${declared.join(" / ")}，档位「${entry.reasoningEffort}」会被忽略。` };
+            return { kind: "effort-undeclared", text: t("status.effortUndeclaredOther", { model: entry.model, declared: declared.join(" / "), effort: entry.reasoningEffort }) };
           }
         }
         return { kind: "ok", text: "" };
@@ -780,21 +797,21 @@ moduleLoaderWindow.__ModuleLoader__!.load({
         try {
           // Read-modify-write with the revision we last saw; the host replaces
           // arrays wholesale, so the full merged list goes back.
-          const desc = unwrap(await remote.settings.describe(), "读取设置");
+          const desc = unwrap(await remote.settings.describe(), t("common.readSettings"));
           const ns = desc.namespaces.find((n) => n.ns === SUBAGENT_NS);
-          if (!ns) throw new Error("当前 DSH 组合没有「子代理模型选择」设置，无法自动授权。请到 设置 → 插件 → 子代理 手动开启。");
+          if (!ns) throw new Error(t("auth.noSetting"));
           const current = ns.value as { enabled?: boolean; allowedModels?: Array<{ provider: string; model: string }> } | undefined;
           const routes = Array.isArray(current?.allowedModels) ? [...current.allowedModels] : [];
           for (const e of entries) {
             if (e.provider && e.model && !routes.some((r) => r.provider === e.provider && r.model === e.model)) routes.push({ provider: e.provider, model: e.model });
           }
-          const view = unwrap(await remote.settings.update(SUBAGENT_NS, { enabled: true, allowedModels: routes }, ns.revision), "写入子代理模型白名单");
+          const view = unwrap(await remote.settings.update(SUBAGENT_NS, { enabled: true, allowedModels: routes }, ns.revision), t("auth.write"));
           setAllow((a) => ({ ...a, enabled: true, routes, revision: view.revision, present: true }));
-          setMsg(`已授权 ${entries.length} 个模型给子代理（DSH 的子代理模型选择已${current?.enabled ? "保持开启" : "开启"}）。`);
+          setMsg(t("auth.done", { count: entries.length, state: current?.enabled ? t("auth.stateKept") : t("auth.stateOn") }));
         } catch (e) {
           const message = e instanceof Error ? e.message : String(e);
-          if (/conflict|stale|changed since it was read|revision/i.test(message)) { await reload({ silent: true }); setMsg("设置刚被别处修改，已重新加载；请再点一次「授权」。"); }
-          else { setAuthWritable(false); setError(`自动授权失败：${message}。请到 设置 → 插件 → 子代理 手动开启模型选择并添加模型。`); }
+          if (/conflict|stale|changed since it was read|revision/i.test(message)) { await reload({ silent: true }); setMsg(t("auth.conflict")); }
+          else { setAuthWritable(false); setError(t("auth.failed", { message })); }
         } finally { setBusy(null); }
       };
 
@@ -804,7 +821,7 @@ moduleLoaderWindow.__ModuleLoader__!.load({
         try {
           const remote = getRemote(currentCtx)!;
           const ns = (await remote.settings.describe()).value?.namespaces.find((n) => n.ns === NS);
-          const view = unwrap(await remote.settings.update(NS, { legacyNoticeDismissed: true }, ns?.revision ?? revision), "记录提醒状态");
+          const view = unwrap(await remote.settings.update(NS, { legacyNoticeDismissed: true }, ns?.revision ?? revision), t("banner.write"));
           setRevision(view.revision);
           // The flag is now saved; keep other unsaved edits visibly unsaved.
           setSavedSnapshot((snap) => {
@@ -815,8 +832,8 @@ moduleLoaderWindow.__ModuleLoader__!.load({
               return snap;
             }
           });
-          setMsg("已记录，之后不再显示这条提醒。");
-        } catch (e) { setError(`记录失败：${e instanceof Error ? e.message : String(e)}；本次关闭后下次仍会显示。`); }
+          setMsg(t("banner.dismissed"));
+        } catch (e) { setError(t("banner.dismissFailed", { message: e instanceof Error ? e.message : String(e) })); }
       };
 
       const save = async () => {
@@ -834,6 +851,7 @@ moduleLoaderWindow.__ModuleLoader__!.load({
             enabled: draft.enabled,
             mode: draft.mode,
             contextMode: draft.contextMode,
+            language: draft.language,
             advisorPrompt: draft.advisorPrompt,
             chain: draft.chain.filter((e) => e.provider && e.model).map((e) => ({
               ...(e.label?.trim() ? { label: e.label } : {}),
@@ -852,23 +870,23 @@ moduleLoaderWindow.__ModuleLoader__!.load({
               perEntryMaxChars: clamp(draft.limits.perEntryMaxChars, 200, 20000) ?? 4000,
             },
           };
-          const view = unwrap(await remote.settings.update(NS, sanitized, revision), "保存设置");
+          const view = unwrap(await remote.settings.update(NS, sanitized, revision), t("save.write"));
           setRevision(view.revision);
           setDraft(view.value as DraftConfig);
           setSavedSnapshot(JSON.stringify(view.value));
-          setMsg(`已保存并即时生效。${dropped > 0 ? ` 已忽略 ${dropped} 个未填供应商/模型的未完成条目。` : ""}`);
+          setMsg(t("save.done", { dropped: dropped > 0 ? t("save.dropped", { count: dropped }) : "" }));
         } catch (e) {
           const message = e instanceof Error ? e.message : String(e);
-          if (/conflict|stale|changed since it was read|revision/i.test(message)) { await reload({ silent: true }); setMsg("检测到配置已被外部修改：已重新加载最新配置，未保存的修改已被替换，请重新调整后再保存。"); }
-          else setError(`保存失败：${message}`);
+          if (/conflict|stale|changed since it was read|revision/i.test(message)) { await reload({ silent: true }); setMsg(t("save.conflict")); }
+          else setError(t("save.failed", { message }));
         } finally { setSaving(false); }
       };
 
       if (!draft) {
         return h("li", { className: "dsh-advisor-chain-settings", style: { width: "100%", color: "var(--dsw-alias-label-primary)", fontFamily: "var(--dsw-font-family, inherit)", listStyle: "none", padding: 0, margin: 0 } },
           h("div", { style: SET.row },
-            h("div", { style: error ? SET.msgErr : SET.desc }, error || "加载配置中…"),
-            error ? h("button", { style: SET.btn, type: "button", onClick: () => reload() }, "重试") : null));
+            h("div", { style: error ? SET.msgErr : SET.desc }, error || t("common.loading")),
+            error ? h("button", { style: SET.btn, type: "button", onClick: () => reload() }, t("common.retry")) : null));
       }
 
       const dirty = savedSnapshot !== "" && JSON.stringify(draft) !== savedSnapshot;
@@ -886,20 +904,20 @@ moduleLoaderWindow.__ModuleLoader__!.load({
         const catalog = catalogOf(entry.provider);
         const options = [
           ...catalog.map((m) => ({ value: m.id, label: m.name && m.name !== m.id ? `${m.id}（${m.name}）` : m.id })),
-          ...(entry.model && !catalog.some((m) => m.id === entry.model) ? [{ value: entry.model, label: `${entry.model}（不在已获取的模型列表里）` }] : []),
+          ...(entry.model && !catalog.some((m) => m.id === entry.model) ? [{ value: entry.model, label: t("entry.modelNotListed", { model: entry.model }) }] : []),
         ];
         const fetching = busy === `discover:${entry.provider}`;
-        return h(Field, { label: "模型" },
+        return h(Field, { label: t("entry.modelField") },
           h("div", { style: { display: "flex", gap: 6, width: "100%", minWidth: 0 } },
-            h(Dropdown, { width: "100%", ariaLabel: "模型", value: entry.model, options: options.length ? options : [{ value: "", label: catalog.length ? "请选择" : "未取到模型列表" }], onChange: (e: { target: { value: string } }) => patchEntry(index, { model: e.target.value, reasoningEffort: undefined }) }),
+            h(Dropdown, { width: "100%", ariaLabel: t("entry.modelField"), value: entry.model, options: options.length ? options : [{ value: "", label: catalog.length ? t("entry.modelPick") : t("entry.modelCatalogEmpty") }], onChange: (e: { target: { value: string } }) => patchEntry(index, { model: e.target.value, reasoningEffort: undefined }) }),
             catalog.length === 0
-              ? h("button", { style: { ...SET.btn, height: 32, whiteSpace: "nowrap", flexShrink: 0 }, type: "button", disabled: !entry.provider || busy !== null, onClick: () => void discover(entry.provider) }, fetching ? "获取中…" : "获取模型列表")
+              ? h("button", { style: { ...SET.btn, height: 32, whiteSpace: "nowrap", flexShrink: 0 }, type: "button", disabled: !entry.provider || busy !== null, onClick: () => void discover(entry.provider) }, fetching ? t("entry.discovering") : t("entry.discover"))
               : null));
       };
       const effortField = (index: number, entry: DraftChainEntry) => {
         const declared = catalogOf(entry.provider).find((m) => m.id === entry.model)?.efforts ?? [];
-        const options = [{ value: "", label: declared.length ? "默认（模型默认档位）" : "默认（该模型未声明推理等级）" }, ...declared.map((v) => ({ value: v, label: v })), ...(entry.reasoningEffort && !declared.includes(entry.reasoningEffort) ? [{ value: entry.reasoningEffort, label: `${entry.reasoningEffort}（未声明，会被忽略）` }] : [])];
-        return h(Field, { label: "推理档位" }, h(Dropdown, { width: 180, ariaLabel: "推理档位", value: entry.reasoningEffort ?? "", options, onChange: (e: { target: { value: string } }) => patchEntry(index, { reasoningEffort: e.target.value || undefined }) }));
+        const options = [{ value: "", label: declared.length ? t("entry.effortDefault") : t("entry.effortDefaultUndeclared") }, ...declared.map((v) => ({ value: v, label: v })), ...(entry.reasoningEffort && !declared.includes(entry.reasoningEffort) ? [{ value: entry.reasoningEffort, label: t("entry.effortUndeclaredOption", { effort: entry.reasoningEffort }) }] : [])];
+        return h(Field, { label: t("entry.effortField") }, h(Dropdown, { width: 180, ariaLabel: t("entry.effortField"), value: entry.reasoningEffort ?? "", options, onChange: (e: { target: { value: string } }) => patchEntry(index, { reasoningEffort: e.target.value || undefined }) }));
       };
 
       const entryNode = (index: number, entry: DraftChainEntry) => {
@@ -907,24 +925,24 @@ moduleLoaderWindow.__ModuleLoader__!.load({
         return h("div", { key: index, style: SET.entry },
           h("div", { style: { display: "flex", alignItems: "center", gap: 8, marginBottom: 10 } },
             h("span", { style: { ...SET.desc, marginTop: 0, width: 22 } }, `#${index + 1}`),
-            h("span", { style: status.kind === "ok" ? okStyle : status.kind === "effort-undeclared" || status.kind === "catalog-unknown" ? warnStyle : errorStyle }, status.kind === "ok" ? "✓ 可用" : status.kind === "provider-missing" ? "⚠ 供应商不存在" : status.kind === "model-unknown" ? "⚠ 模型未配置" : status.kind === "catalog-unknown" ? "⚠ 未取到模型列表" : status.kind === "selection-off" ? "⚠ 子代理模型选择已关闭" : status.kind === "unauthorized" ? "⚠ 未授权" : "⚠ 档位未声明"),
+            h("span", { style: status.kind === "ok" ? okStyle : status.kind === "effort-undeclared" || status.kind === "catalog-unknown" ? warnStyle : errorStyle }, status.kind === "ok" ? t("status.ok") : status.kind === "provider-missing" ? t("status.providerMissing") : status.kind === "model-unknown" ? t("status.modelUnknown") : status.kind === "catalog-unknown" ? t("status.catalogUnknown") : status.kind === "selection-off" ? t("status.selectionOff") : status.kind === "unauthorized" ? t("status.unauthorized") : t("status.effortUndeclared")),
             h("span", { style: { flex: 1 } }),
-            status.kind === "unauthorized" && authWritable ? h("button", { style: SET.btn, type: "button", disabled: busy !== null, onClick: () => authorize([entry]) }, "授权") : null,
-            status.kind === "selection-off" && authWritable ? h("button", { style: SET.btn, type: "button", disabled: busy !== null, onClick: () => authorize([entry]) }, "开启并授权") : null,
-            h("button", { style: SET.btn, type: "button", "aria-label": "上移", title: "上移", onClick: () => moveEntry(index, -1), disabled: index === 0 }, "↑"),
-            h("button", { style: SET.btn, type: "button", "aria-label": "下移", title: "下移", onClick: () => moveEntry(index, 1), disabled: index === draft.chain.length - 1 }, "↓"),
-            h("button", { style: SET.btn, type: "button", onClick: () => removeEntry(index) }, "删除")),
+            status.kind === "unauthorized" && authWritable ? h("button", { style: SET.btn, type: "button", disabled: busy !== null, onClick: () => authorize([entry]) }, t("entry.authorize")) : null,
+            status.kind === "selection-off" && authWritable ? h("button", { style: SET.btn, type: "button", disabled: busy !== null, onClick: () => authorize([entry]) }, t("entry.authorizeEnable")) : null,
+            h("button", { style: SET.btn, type: "button", "aria-label": t("common.moveUp"), title: t("common.moveUp"), onClick: () => moveEntry(index, -1), disabled: index === 0 }, "↑"),
+            h("button", { style: SET.btn, type: "button", "aria-label": t("common.moveDown"), title: t("common.moveDown"), onClick: () => moveEntry(index, 1), disabled: index === draft.chain.length - 1 }, "↓"),
+            h("button", { style: SET.btn, type: "button", onClick: () => removeEntry(index) }, t("common.delete"))),
           // Grid (not flex): a long provider name must not squeeze the model
           // field. Fixed name column; provider and model split the rest evenly
           // and ellipsize instead of overflowing.
           h("div", { style: { display: "grid", gridTemplateColumns: "minmax(130px, 160px) minmax(0, 1fr) minmax(0, 1fr)", gap: 12, alignItems: "end" } },
-            h(Field, { label: "显示名（可选）" }, h("input", { style: { ...SET.control, width: "100%", boxSizing: "border-box" }, placeholder: "如：架构顾问", value: entry.label ?? "", onChange: (e: React.ChangeEvent<HTMLInputElement>) => patchEntry(index, { label: e.target.value }) })),
-            h(Field, { label: "供应商" }, h(Dropdown, { width: "100%", ariaLabel: "供应商", value: entry.provider, options: providers.length ? providers.map((p) => ({ value: p.id, label: p.name && p.name !== p.id ? `${p.id}（${p.name}）` : p.id })) : [{ value: entry.provider, label: entry.provider || "（未获取到供应商）" }], onChange: (e: { target: { value: string } }) => patchProvider(index, e.target.value) })),
+            h(Field, { label: t("entry.labelField") }, h("input", { style: { ...SET.control, width: "100%", boxSizing: "border-box" }, placeholder: t("entry.labelPlaceholder"), value: entry.label ?? "", onChange: (e: React.ChangeEvent<HTMLInputElement>) => patchEntry(index, { label: e.target.value }) })),
+            h(Field, { label: t("entry.providerField") }, h(Dropdown, { width: "100%", ariaLabel: t("entry.providerField"), value: entry.provider, options: providers.length ? providers.map((p) => ({ value: p.id, label: p.name && p.name !== p.id ? `${p.id}（${p.name}）` : p.id })) : [{ value: entry.provider, label: entry.provider || t("entry.providerNone") }], onChange: (e: { target: { value: string } }) => patchProvider(index, e.target.value) })),
             modelField(index, entry)),
           h("div", { style: { display: "flex", gap: 12, flexWrap: "wrap", marginTop: 10 } },
             effortField(index, entry),
-            h(Field, { label: "maxTokens" }, h("input", { style: { ...SET.control, width: 120 }, type: "number", min: 1, value: entry.maxTokens ?? "", onChange: (e: React.ChangeEvent<HTMLInputElement>) => patchEntry(index, { maxTokens: e.target.value === "" ? undefined : Number(e.target.value) }) })),
-            h(Field, { label: "超时（毫秒）" }, h("input", { style: { ...SET.control, width: 130 }, type: "number", min: 1000, max: 600000, step: 500, value: entry.timeoutMs ?? "", onChange: (e: React.ChangeEvent<HTMLInputElement>) => patchEntry(index, { timeoutMs: e.target.value === "" ? undefined : Number(e.target.value) }) }))),
+            h(Field, { label: t("entry.maxTokensField") }, h("input", { style: { ...SET.control, width: 120 }, type: "number", min: 1, value: entry.maxTokens ?? "", onChange: (e: React.ChangeEvent<HTMLInputElement>) => patchEntry(index, { maxTokens: e.target.value === "" ? undefined : Number(e.target.value) }) })),
+            h(Field, { label: t("entry.timeoutField") }, h("input", { style: { ...SET.control, width: 130 }, type: "number", min: 1000, max: 600000, step: 500, value: entry.timeoutMs ?? "", onChange: (e: React.ChangeEvent<HTMLInputElement>) => patchEntry(index, { timeoutMs: e.target.value === "" ? undefined : Number(e.target.value) }) }))),
           status.kind !== "ok" ? h("div", { style: { ...smallStyle, ...(status.kind === "effort-undeclared" || status.kind === "catalog-unknown" ? warnStyle : errorStyle), marginTop: 8 } }, status.text) : null);
       };
 
@@ -932,37 +950,39 @@ moduleLoaderWindow.__ModuleLoader__!.load({
         h("div", { style: { pointerEvents: saving ? "none" : "auto", opacity: saving ? 0.6 : 1 } },
           showLegacyNotice ? h("div", { role: "status", style: SET.banner },
             h("div", { style: { flex: 1, minWidth: 0 } },
-              h("div", { style: { fontWeight: 600, marginBottom: 4 } }, "你从旧版本升级而来"),
-              h("div", null, "升级前的会话里留有旧版 Second Opinion 写入的咨询记录：只要本插件保持启用，这些会话可以正常打开；卸载本插件后它们可能无法打开。本版本不再写入这类记录，修复旧会话的工具将在下一版本提供。"),
-              h("a", { href: UPGRADE_NOTES_URL, target: "_blank", rel: "noreferrer", style: { ...smallStyle, color: "var(--dsw-alias-brand-primary)" } }, "详见 README「升级须知」")),
-            h("button", { style: SET.btn, type: "button", onClick: dismissLegacyNotice }, "知道了")) : null,
-          h(SRow, { title: "启用 Second Opinion", desc: "停用后 second_opinion 不可用，也不再注入使用边界提示。" },
-            h(Toggle, { checked: draft.enabled, label: "启用 Second Opinion", onChange: (next: boolean) => patch({ enabled: next }) })),
-          h(SRow, { title: "触发模式", desc: "auto：主模型按调用判据自主咨询；manual：仅用户明确要求时咨询。" },
-            h(Dropdown, { value: draft.mode, width: 240, ariaLabel: "触发模式", options: [{ value: "auto", label: "auto（主模型自主判断）" }, { value: "manual", label: "manual（仅用户要求时）" }], onChange: (e: { target: { value: string } }) => patch({ mode: e.target.value as DraftConfig["mode"] }) })),
-          h(SRow, { title: "默认咨询模式", desc: "继承：顾问收到当前会话的有界抄本；盲审：顾问不看对话，只依据问题与补充背景独立判断。可在调用时按次覆盖。" },
-            h(Dropdown, { value: draft.contextMode, width: 240, ariaLabel: "默认咨询模式", options: [{ value: "inherited", label: "继承（会话抄本）" }, { value: "standalone", label: "盲审（独立判断）" }], onChange: (e: { target: { value: string } }) => patch({ contextMode: e.target.value as DraftConfig["contextMode"] }) })),
+              h("div", { style: { fontWeight: 600, marginBottom: 4 } }, t("banner.title")),
+              h("div", null, t("banner.body")),
+              h("a", { href: UPGRADE_NOTES_URL, target: "_blank", rel: "noreferrer", style: { ...smallStyle, color: "var(--dsw-alias-brand-primary)" } }, t("banner.link"))),
+            h("button", { style: SET.btn, type: "button", onClick: dismissLegacyNotice }, t("banner.dismiss"))) : null,
+          h(SRow, { title: t("settings.enabledTitle"), desc: t("settings.enabledDesc") },
+            h(Toggle, { checked: draft.enabled, label: t("settings.enabledTitle"), onChange: (next: boolean) => patch({ enabled: next }) })),
+          h(SRow, { title: t("settings.triggerTitle"), desc: t("settings.triggerDesc") },
+            h(Dropdown, { value: draft.mode, width: 240, ariaLabel: t("settings.triggerTitle"), options: [{ value: "auto", label: t("settings.triggerAuto") }, { value: "manual", label: t("settings.triggerManual") }], onChange: (e: { target: { value: string } }) => patch({ mode: e.target.value as DraftConfig["mode"] }) })),
+          h(SRow, { title: t("settings.modeTitle"), desc: t("settings.modeDesc") },
+            h(Dropdown, { value: draft.contextMode, width: 240, ariaLabel: t("settings.modeTitle"), options: [{ value: "inherited", label: t("settings.modeInherited") }, { value: "standalone", label: t("settings.modeStandalone") }], onChange: (e: { target: { value: string } }) => patch({ contextMode: e.target.value as DraftConfig["contextMode"] }) })),
+          h(SRow, { title: t("settings.languageTitle"), desc: t("settings.languageDesc") },
+            h(Dropdown, { value: draft.language, width: 240, ariaLabel: t("settings.languageTitle"), options: [{ value: "auto", label: t("settings.languageAuto") }, { value: "zh", label: t("settings.languageZh") }, { value: "en", label: t("settings.languageEn") }], onChange: (e: { target: { value: string } }) => patch({ language: e.target.value as DraftConfig["language"] }) })),
           h("div", { style: { ...SET.groupHead, alignItems: "flex-start" } },
             h("div", { style: { minWidth: 0 } },
-              h("div", { style: SET.title }, "顾问模型链"),
-              h("div", { style: SET.desc }, "按顺序尝试；某项失败自动顺延下一个。顾问是只读子代理：能读文件、跑只读命令核实，改不了任何东西。模型与推理等级在 设置 → 模型 里配置，这里只从中选择。")),
+              h("div", { style: SET.title }, t("settings.chainTitle")),
+              h("div", { style: SET.desc }, t("settings.chainDesc"))),
             h("div", { style: { display: "flex", gap: 8, flexShrink: 0 } },
-              unauthorized.length > 0 && authWritable ? h("button", { style: SET.btn, type: "button", disabled: busy !== null, onClick: () => authorize(unauthorized) }, allow.enabled ? "授权全部" : "开启并授权全部") : null,
-              h("button", { style: SET.btn, type: "button", onClick: addEntry }, "＋ 添加顾问模型"))),
+              unauthorized.length > 0 && authWritable ? h("button", { style: SET.btn, type: "button", disabled: busy !== null, onClick: () => authorize(unauthorized) }, allow.enabled ? t("settings.chainAuthorizeAll") : t("settings.chainEnableAndAuthorizeAll")) : null,
+              h("button", { style: SET.btn, type: "button", onClick: addEntry }, t("settings.chainAdd")))),
           ...draft.chain.map((entry, index) => entryNode(index, entry)),
-          draft.chain.length === 0 ? h("div", { style: { ...SET.desc, padding: "0 0 12px" } }, "尚未配置顾问模型——先在 设置 → 模型 里添加供应商和模型，再在这里选择。") : null,
+          draft.chain.length === 0 ? h("div", { style: { ...SET.desc, padding: "0 0 12px" } }, t("settings.chainEmpty")) : null,
           h("div", { style: { padding: "16px 0", borderBottom: "0.5px solid var(--dsw-alias-border-l2)" } },
-            h("div", { style: SET.title }, "顾问提示词"),
-            h("div", { style: SET.desc }, "整条链共用的回答要求；清空并保存可回落到插件默认。身份、只读与输出约束由插件固定追加，不在这里。"),
+            h("div", { style: SET.title }, t("settings.promptTitle")),
+            h("div", { style: SET.desc }, t("settings.promptDesc")),
             h("textarea", { style: SET.textarea, value: draft.advisorPrompt, onChange: (e: React.ChangeEvent<HTMLTextAreaElement>) => patch({ advisorPrompt: e.target.value }) })),
-          numRow("最多追问轮数", "每个咨询线程最多可追问多少轮；追问复用同一个顾问子会话。", draft.followup?.maxRounds ?? 8, 1, 20, 1, (v) => patch({ followup: { maxRounds: Math.min(20, Math.max(1, v || 8)) } })),
-          numRow("默认超时（毫秒）", "顾问未单独配置超时时的上限。顾问可能先思考再作答；开始输出回答后只要持续输出就不会被打断。", draft.limits?.defaultTimeoutMs ?? 300000, 1000, 600000, 500, (v) => patch({ limits: { ...draft.limits, defaultTimeoutMs: v || 300000 } })),
-          numRow("抄本字符预算", "继承模式下发给顾问的会话抄本总字符上限；超出时保留最新部分并附最初请求的摘要。", draft.limits?.transcriptMaxChars ?? 120000, 2000, 400000, 1000, (v) => patch({ limits: { ...draft.limits, transcriptMaxChars: v || 120000 } })),
-          numRow("单条消息上限", "抄本中单条消息（含工具输出）的最大字符数；超出部分被截断，顾问可按路径自行读取完整内容。", draft.limits?.perEntryMaxChars ?? 4000, 200, 20000, 100, (v) => patch({ limits: { ...draft.limits, perEntryMaxChars: v || 4000 } })),
-          numRow("重复提问强制咨询阈值", "同一用户问题重复达到该次数时，提示升级为强制咨询。", draft.trigger?.repeatThreshold ?? 3, 2, 10, 1, (v) => patch({ trigger: { repeatThreshold: Math.min(10, Math.max(2, v || 3)) } }), true),
+          numRow(t("settings.followUpTitle"), t("settings.followUpDesc"), draft.followup?.maxRounds ?? 8, 1, 20, 1, (v) => patch({ followup: { maxRounds: Math.min(20, Math.max(1, v || 8)) } })),
+          numRow(t("settings.timeoutTitle"), t("settings.timeoutDesc"), draft.limits?.defaultTimeoutMs ?? 300000, 1000, 600000, 500, (v) => patch({ limits: { ...draft.limits, defaultTimeoutMs: v || 300000 } })),
+          numRow(t("settings.transcriptTitle"), t("settings.transcriptDesc"), draft.limits?.transcriptMaxChars ?? 120000, 2000, 400000, 1000, (v) => patch({ limits: { ...draft.limits, transcriptMaxChars: v || 120000 } })),
+          numRow(t("settings.perEntryTitle"), t("settings.perEntryDesc"), draft.limits?.perEntryMaxChars ?? 4000, 200, 20000, 100, (v) => patch({ limits: { ...draft.limits, perEntryMaxChars: v || 4000 } })),
+          numRow(t("settings.repeatTitle"), t("settings.repeatDesc"), draft.trigger?.repeatThreshold ?? 3, 2, 10, 1, (v) => patch({ trigger: { repeatThreshold: Math.min(10, Math.max(2, v || 3)) } }), true),
           h("div", { style: { ...SET.row, display: "block" } },
-            h("div", { style: SET.title }, "关于"),
-            h("div", { style: { ...SET.desc, marginTop: 4 } }, "Second Opinion（dsh-advisor-chain）由 ", h("a", { href: REPO_URL, target: "_blank", rel: "noreferrer", style: { color: "var(--dsw-alias-brand-primary)" } }, "yyty947"), " 开发。灵感来自 ", h("a", { href: "https://github.com/pixelsama/codex-advisor", target: "_blank", rel: "noreferrer", style: { color: "var(--dsw-alias-brand-primary)" } }, "pixelsama/codex-advisor"), "。"),
+            h("div", { style: SET.title }, t("about.title")),
+            h("div", { style: { ...SET.desc, marginTop: 4 } }, t("about.by"), h("a", { href: REPO_URL, target: "_blank", rel: "noreferrer", style: { color: "var(--dsw-alias-brand-primary)" } }, "yyty947"), t("about.inspired"), h("a", { href: "https://github.com/pixelsama/codex-advisor", target: "_blank", rel: "noreferrer", style: { color: "var(--dsw-alias-brand-primary)" } }, "pixelsama/codex-advisor"), t("about.end")),
             h("div", { style: SET.desc }, h("a", { href: REPO_URL, target: "_blank", rel: "noreferrer", style: { color: "var(--dsw-alias-brand-primary)" } }, REPO_URL.replace("https://", ""))))),
         h("div", {
           ref: (node: HTMLElement) => { (dockRef as { current: unknown }).current = node; },
@@ -970,10 +990,10 @@ moduleLoaderWindow.__ModuleLoader__!.load({
           style: { position: "sticky", bottom: 0, marginBottom: scrollerPad ? -scrollerPad : 0, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "10px 16px", background: surface, borderTop: "1px solid var(--dsw-alias-border-l2)", borderRadius: R.md, boxShadow: "0 -4px 16px rgba(0,0,0,0.12)" },
         },
           h("div", { style: { flex: 1, minWidth: 0, maxHeight: 72, overflowY: "auto" } },
-            error ? h("div", { style: SET.msgErr }, error) : msg ? h("div", { style: SET.msgOk }, msg) : dirty ? h("div", { style: SET.msgErr }, "有未保存更改") : null),
+            error ? h("div", { style: SET.msgErr }, error) : msg ? h("div", { style: SET.msgOk }, msg) : dirty ? h("div", { style: SET.msgErr }, t("common.unsaved")) : null),
           h("div", { style: { display: "flex", alignItems: "center", gap: 10 } },
-            dirty ? h("button", { style: SET.btn, type: "button", onClick: () => reload({ silent: true }) }, "放弃修改") : null,
-            h("button", { style: SET.btnPrimary, type: "button", disabled: saving, onClick: save }, saving ? "保存中…" : "保存"))));
+            dirty ? h("button", { style: SET.btn, type: "button", onClick: () => reload({ silent: true }) }, t("common.cancelEdits")) : null,
+            h("button", { style: SET.btnPrimary, type: "button", disabled: saving, onClick: save }, saving ? t("common.saving") : t("common.save")))));
     }
 
     // ---------- settings primitives ----------
@@ -1079,8 +1099,13 @@ moduleLoaderWindow.__ModuleLoader__!.load({
 
     // ---------- module ----------
     const name = "dsh-advisor-chain";
-    const inject = ["uiConversation", "slots", "remote", "remote.settings", "remote.llm"];
+    const inject = ["uiConversation", "slots", "locale", "remote", "remote.settings", "remote.llm"];
     let currentCtx: unknown = null;
+
+    interface LocaleService {
+      register(ns: string, dicts: Record<string, Record<string, string>>): () => void;
+      bind(ns: string): Translate;
+    }
 
     function apply(ctx: {
       uiConversation?: { events?: { register: (definition: unknown) => unknown } };
@@ -1088,17 +1113,27 @@ moduleLoaderWindow.__ModuleLoader__!.load({
         inject: (ownerKey: string, factory: () => unknown) => unknown;
         register: (options: Record<string, unknown>, component: (props: unknown) => React.ReactElement) => unknown;
       };
+      locale?: LocaleService;
+      effect?: (setup: () => unknown, label?: string) => unknown;
     }) {
       currentCtx = ctx;
+      // Copy: register both dictionaries with the host (one disposer covers
+      // them), then bind the translator the outlets read at render time.
+      if (ctx.locale && typeof ctx.locale.register === "function" && typeof ctx.locale.bind === "function") {
+        const register = () => ctx.locale!.register(CLIENT_NS, CLIENT_DICTIONARIES);
+        t = ctx.locale.bind(CLIENT_NS);
+        if (typeof ctx.effect === "function") ctx.effect(register, "dsh-advisor-chain: locale dictionaries");
+        else register();
+      }
       // Legacy cards: replay only.
       if (ctx.uiConversation?.events?.register) ctx.uiConversation.events.register(legacyAdvisorCardDefinition);
       // The tool's own row in the chat (keyed by wire tool name).
       ctx.slots.inject("tool.call.toolview", () =>
-        ctx.slots.register({ name: "tool.call.toolview", key: "second_opinion" }, SecondOpinionToolRow as unknown as (props: unknown) => React.ReactElement));
+        ctx.slots.register({ name: "tool.call.toolview", key: "second_opinion", locale: CLIENT_NS }, SecondOpinionToolRow as unknown as (props: unknown) => React.ReactElement));
       ctx.slots.inject("conversation.chat.node", () =>
-        ctx.slots.register({ name: "conversation.chat.node", key: "dsh-advisor-chain-legacy" }, LegacyAdvisorCardView as unknown as (props: unknown) => React.ReactElement));
+        ctx.slots.register({ name: "conversation.chat.node", key: "dsh-advisor-chain-legacy", locale: CLIENT_NS }, LegacyAdvisorCardView as unknown as (props: unknown) => React.ReactElement));
       ctx.slots.inject("settings.section", () =>
-        ctx.slots.register({ name: "settings.section", id: "dsh-advisor-chain", order: 0, label: "顾问设置" }, AdvisorSettingsTab as unknown as (props: unknown) => React.ReactElement));
+        ctx.slots.register({ name: "settings.section", id: "dsh-advisor-chain", order: 0, label: () => t("nav.title"), locale: CLIENT_NS }, AdvisorSettingsTab as unknown as (props: unknown) => React.ReactElement));
       // Navigation icon for our section (same id as the section above).
       ctx.slots.inject("settings.section.icon", () =>
         ctx.slots.register({ name: "settings.section.icon", id: "dsh-advisor-chain" }, AdvisorNavIcon as unknown as (props: unknown) => React.ReactElement));

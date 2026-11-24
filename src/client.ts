@@ -82,6 +82,8 @@ moduleLoaderWindow.__ModuleLoader__!.load({
       padding: 0,
       fontSize: 12,
     };
+    // Right-aligned link in the card header ("查看过程").
+    const linkButtonStyle: React.CSSProperties = { ...toggleStyle, marginLeft: "auto", whiteSpace: "nowrap" };
 
     // ---------- legacy chat card (read-only replay of advisor/* events) ----------
     // Versions <= 0.3.9 wrote `advisor/*` events for the chat card. 0.3.10
@@ -362,6 +364,17 @@ moduleLoaderWindow.__ModuleLoader__!.load({
       attempts?: Array<{ label: string; ok: boolean; reason?: string }>;
       notes?: string[];
       usage?: { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number; durationMs: number };
+      /** Session the consultation was made from; with consultId this addresses the advisor child's conversation. */
+      parent?: string;
+      /** Dual consultations: each advisor's opinion in chain order. */
+      opinions?: Array<{ label: string; ok: boolean; content: string; consultId?: string }>;
+    }
+    /** Opens a `dsh-resource://` address in the right Sidebar; bound when the host provides `sidebarRight`. */
+    let openInSidebar: ((address: string) => void) | undefined;
+
+    /** Address of an advisor child's conversation in the Session panel's Subagents catalog. */
+    function subagentChatAddress(parent: string, child: string): string {
+      return `dsh-resource://subagentchat/session/${encodeURIComponent(child)}?parent=${encodeURIComponent(parent)}&mode=continuable`;
     }
     interface ToolBlock {
       kind?: string;
@@ -446,13 +459,22 @@ moduleLoaderWindow.__ModuleLoader__!.load({
       const isFollowUp = (meta?.round ?? 0) >= 1 || (!!args.consult_id && !args.question);
       const title = isFollowUp ? (meta?.round ? t("card.followUpTitle", { round: meta.round }) : t("card.followUpTitlePlain")) : t("card.title");
       const mode = meta?.mode ?? args.mode;
+      // Dual results render as two columns, each with its own "查看过程" link;
+      // otherwise the header link opens the (single) advisor's conversation.
+      const dualColumns = meta?.dual && Array.isArray(meta.opinions) && meta.opinions.length === 2 ? meta.opinions : undefined;
+      const processLink = (childId: string | undefined, style: React.CSSProperties = linkButtonStyle) =>
+        openInSidebar && childId && meta?.parent
+          ? h("button", { style, type: "button", title: t("card.openProcessHint"), onClick: () => openInSidebar!(subagentChatAddress(meta.parent!, childId)) }, t("card.openProcess"))
+          : null;
       return h("div", { style: cardStyle, "data-dsh-advisor": "card" },
         h("div", { style: { display: "flex", alignItems: "center", flexWrap: "wrap", gap: 4 } },
           h("span", { style: labelStyle }, title),
           h("span", { style: statusBadge }, statusText),
           mode ? h("span", { style: subtleBadgeStyle }, mode === "standalone" ? t("card.modeStandalone") : t("card.modeInherited")) : null,
           models.map((m, i) => h("span", { key: i, style: badgeStyle("var(--dsw-alias-brand-primary)") }, m)),
-          truncated ? h("span", { style: badgeStyle("var(--dsw-alias-state-warn-primary)") }, t("card.truncated")) : null),
+          truncated ? h("span", { style: badgeStyle("var(--dsw-alias-state-warn-primary)") }, t("card.truncated")) : null,
+          // The advisor's own conversation (its reads and reasoning) opens in the right Sidebar.
+          dualColumns ? null : processLink(meta?.consultId)),
         question ? h("div", { style: { fontWeight: 600, margin: "6px 0 2px" } }, question) : null,
         context ? h("div", null,
           h("button", { style: toggleStyle, type: "button", onClick: () => setContextOpen(!contextOpen) }, `${contextOpen ? t("common.foldOpen") : t("common.foldClosed")} ${t("card.contextToggle")}`),
@@ -468,7 +490,15 @@ moduleLoaderWindow.__ModuleLoader__!.load({
           cached: meta.usage.cacheReadTokens + meta.usage.cacheWriteTokens > 0 ? t("card.usageCached", { cached: meta.usage.cacheReadTokens + meta.usage.cacheWriteTokens }) : "",
           duration: t("card.usageSeconds", { s: Math.max(1, Math.round(meta.usage.durationMs / 1000)) }),
         })) : null,
-        !running && text ? h("div", { style: { marginTop: 2 } }, renderMarkdown(text)) : null,
+        !running && dualColumns
+          ? h("div", { style: { display: "flex", gap: 8, flexWrap: "wrap", marginTop: 4 } }, dualColumns.map((o, i) =>
+            h("div", { key: i, style: { flex: "1 1 240px", minWidth: 240, border: "1px solid var(--dsw-alias-border-l1)", borderRadius: R.lg, padding: "6px 8px" } },
+              h("div", { style: { display: "flex", alignItems: "center", fontWeight: 600, marginBottom: 2 } },
+                h("span", { style: { minWidth: 0 } }, `${t("card.opinion", { n: i + 1 })} · ${o.label}`),
+                processLink(o.consultId, { ...linkButtonStyle, marginLeft: 6 })),
+              o.ok ? h("div", null, renderMarkdown(o.content)) : h("div", { style: errorStyle }, o.content))))
+          : null,
+        !running && text && !dualColumns ? h("div", { style: { marginTop: 2 } }, renderMarkdown(text)) : null,
         !running && !text && block?.error ? h("div", { style: errorStyle }, block.error.reason ?? block.error.code ?? block.error.name ?? t("card.toolFailed")) : null);
     }
 
@@ -1114,6 +1144,8 @@ moduleLoaderWindow.__ModuleLoader__!.load({
         inject: (ownerKey: string, factory: () => unknown) => unknown;
         register: (options: Record<string, unknown>, component: (props: unknown) => React.ReactElement) => unknown;
       };
+      /** Cordis scoped injection for optional services (`sidebarRight`). */
+      inject?: (services: string[], callback: (scoped: unknown) => unknown) => unknown;
       locale?: LocaleService;
       effect?: (setup: () => unknown, label?: string) => unknown;
     }) {
@@ -1125,6 +1157,13 @@ moduleLoaderWindow.__ModuleLoader__!.load({
         t = ctx.locale.bind(CLIENT_NS);
         if (typeof ctx.effect === "function") ctx.effect(register, "dsh-advisor-chain: locale dictionaries");
         else register();
+      }
+      // The right Sidebar service opens the advisor child's conversation; the
+      // card's "查看过程" link is hidden when the host does not provide it.
+      if (typeof ctx.inject === "function") {
+        ctx.inject(["sidebarRight"], ((scoped: { sidebarRight: { openResource: (address: string) => void } }) => {
+          openInSidebar = (address) => scoped.sidebarRight.openResource(address);
+        }) as unknown as (scoped: unknown) => unknown);
       }
       // Legacy cards: replay only.
       if (ctx.uiConversation?.events?.register) ctx.uiConversation.events.register(legacyAdvisorCardDefinition);

@@ -41,6 +41,15 @@ export type AttemptRecord = {
   reason?: string;
 };
 
+/** One advisor's opinion in a dual consultation, for the card's two-column view. */
+export interface OpinionRecord {
+  label: string;
+  ok: boolean;
+  content: string;
+  /** The advisor child's session id, so each column can open its own conversation. */
+  consultId: string;
+}
+
 /** Token usage and wall time of one advisor call, when the child reported it.
  *  `inputTokens` excludes cache traffic; cache reads/writes are separate. */
 export type UsageRecord = {
@@ -64,6 +73,10 @@ export interface ToolValue {
   /** Follow-up round this answer belongs to; absent on a new consultation. */
   round?: number;
   usage?: UsageRecord;
+  /** Session the consultation was made from; lets the card open the advisor child's conversation. */
+  parentSessionId?: string;
+  /** Dual consultations only: each advisor's opinion, in chain order. */
+  opinions?: OpinionRecord[];
 }
 
 const isRefusal = (r: AdvisorOutcome | Refusal | (AdvisorOutcome & { childId: string })): r is Refusal =>
@@ -143,6 +156,15 @@ export function createSecondOpinionTool(deps: AdvisorDeps) {
             },
           },
           notes: { type: "array", items: { type: "string" } },
+          parentSessionId: { type: "string" },
+          opinions: {
+            type: "array",
+            items: {
+              type: "object",
+              additionalProperties: false,
+              properties: { label: { type: "string", required: true }, ok: { type: "boolean", required: true }, content: { type: "string", required: true }, consultId: { type: "string", required: true } },
+            },
+          },
           usage: {
             type: "object",
             additionalProperties: false,
@@ -177,6 +199,9 @@ export function createSecondOpinionTool(deps: AdvisorDeps) {
           followUp: clipForMeta(a.follow_up),
           round: v.round,
           usage: v.usage,
+          parent: v.parentSessionId,
+          // Two full opinions can be long; the card needs them whole, so only an extreme size is cut.
+          opinions: v.opinions?.map((o) => ({ label: o.label, ok: o.ok, content: clipForMeta(o.content, 60000) ?? "", consultId: o.consultId })),
         };
         for (const [key, val] of Object.entries(optional)) if (val !== undefined) meta[key] = val;
         return meta as JsonMeta;
@@ -225,6 +250,7 @@ export function createSecondOpinionTool(deps: AdvisorDeps) {
           attempts,
           notes,
           round: begin.round,
+          parentSessionId: String(parent.id),
           ...(usage ? { usage } : {}),
         };
       }
@@ -299,11 +325,13 @@ export function createSecondOpinionTool(deps: AdvisorDeps) {
           const attempts: AttemptRecord[] = [];
           let anyTruncated = false;
           let usage: UsageRecord | undefined;
+          const opinions: OpinionRecord[] = [];
           results.forEach((result, i) => {
             const label = entryName(pair[i]);
             if (!isRefusal(result) && result.ok && result.content.trim()) {
               models.push(`${pair[i].provider}/${pair[i].model}`);
               attempts.push({ label, ok: true });
+              opinions.push({ label, ok: true, content: result.content, consultId: result.childId });
               if (result.truncated) anyTruncated = true;
               if (result.usage) {
                 const u = result.usage;
@@ -315,6 +343,7 @@ export function createSecondOpinionTool(deps: AdvisorDeps) {
             } else {
               const reason = isRefusal(result) ? result.message : (result.failure ?? t(prompt.lang, "tool.dualNoContent"));
               attempts.push({ label, ok: false, reason });
+              opinions.push({ label, ok: false, content: reason, consultId: isRun(result) ? result.childId : "" });
               sections.push(t(prompt.lang, "tool.dualFailedSection", { label, reason }));
             }
           });
@@ -340,7 +369,7 @@ export function createSecondOpinionTool(deps: AdvisorDeps) {
           for (const r of results.filter(isRun)) {
             if (r.ok) deps.registry.record({ childId: r.childId, parentSessionId: String(parent.id), consultId: r.childId, label: ADVISOR_LABEL_PREFIX + "dual", provider: "", model: "", dual: true });
           }
-          return { advice: sections.join("\n\n———\n\n") + failedNote, model: models.join(" + "), consultId: firstChild, dual: true, truncated: anyTruncated, attempts, notes, ...(usage ? { usage } : {}) };
+          return { advice: sections.join("\n\n———\n\n") + failedNote, model: models.join(" + "), consultId: firstChild, dual: true, truncated: anyTruncated, attempts, notes, parentSessionId: String(parent.id), opinions, ...(usage ? { usage } : {}) };
         }
 
         const attempts: AttemptRecord[] = [];
@@ -359,6 +388,7 @@ export function createSecondOpinionTool(deps: AdvisorDeps) {
               truncated: result.truncated,
               attempts,
               notes,
+              parentSessionId: String(parent.id),
               ...(result.usage ? { usage: result.usage } : {}),
             };
           }

@@ -29,7 +29,7 @@ DeepSeek Harness（DSH）插件：让主模型在需要时——自动判断或�
 
 **其他变化。** 父对话里不再有内嵌的实时滚字（顾问过程在子代理面板查看）；旧版本的 `consult_id` 不再可追问；每条链的「温度」设置被移除（子代理接口不支持）。
 
-完整变更见 [CHANGELOG.md](CHANGELOG.md)；设计文档见 [docs/DESIGN-0.3.10.md](docs/DESIGN-0.3.10.md)。
+完整变更见 [CHANGELOG.md](CHANGELOG.md)；架构见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)，开发与发布流程见 [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md)。
 
 ## 界面
 

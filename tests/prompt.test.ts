@@ -6,7 +6,6 @@ const base = {
   enabled: true,
   mode: "auto" as const,
   contextMode: "inherited" as const,
-  language: "auto" as const,
   advisorPrompt: "custom prompt",
   chain: [{ provider: "p", model: "m" }],
   followup: { maxRounds: 8 },

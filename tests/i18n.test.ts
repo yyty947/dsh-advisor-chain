@@ -29,11 +29,9 @@ describe("language detection", () => {
     expect(detectLanguage("继续 refactor the parser module now")).toBe("en");
     expect(detectLanguage("12345 !!!")).toBeUndefined();
   });
-  it("respects an explicit setting over inference and falls back for empty text", () => {
-    expect(resolveLanguage("en", "中文问题")).toBe("en");
-    expect(resolveLanguage("zh", "English question")).toBe("zh");
-    expect(resolveLanguage("auto", "English question")).toBe("en");
-    expect(resolveLanguage("auto", "")).toBe("zh");
-    expect(resolveLanguage(undefined, "English")).toBe("en");
+  it("falls back for empty text and resolves without a setting", () => {
+    expect(resolveLanguage("English question")).toBe("en");
+    expect(resolveLanguage("")).toBe("zh");
+    expect(resolveLanguage("12345 !!!")).toBe("zh");
   });
 });

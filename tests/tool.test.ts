@@ -66,7 +66,7 @@ function fakeHost(childId: string, answer: string | Error) {
 function deps(host: HostServices, config: Record<string, unknown> = {}) {
   const registry = new AdvisorRegistry({ host, sandbox: { setSandboxMode: vi.fn(), overrideOf: vi.fn(() => "read-only") }, descriptorOf: () => ({ label: `${ADVISOR_LABEL_PREFIX}x` }), depthOf: () => 0 });
   registry.install();
-  return { host, registry, getConfig: () => normalizeConfig({ language: "zh", chain: [{ provider: "z-ai", model: "glm-5.4", reasoningEffort: "max" }], limits: { defaultTimeoutMs: 5000 }, ...config }) };
+  return { host, registry, getConfig: () => normalizeConfig({ chain: [{ provider: "z-ai", model: "glm-5.4", reasoningEffort: "max" }], limits: { defaultTimeoutMs: 5000 }, ...config }) };
 }
 
 const exec = (parent: Agent = fakeParent()) => ({ agent: parent, signal: new AbortController().signal }) as never;
@@ -75,16 +75,16 @@ describe("second_opinion tool", () => {
   it("returns a lossless-JSON value whose consult_id is the winning child's session id", async () => {
     const d = deps(fakeHost("child-abc", "意见：可以。"));
     const tool = createSecondOpinionTool(d);
-    const value = (await tool.execute({ question: "q?", context: "c", mode: "standalone" }, exec())) as ToolValue;
+    const value = (await tool.execute({ question: "问题？", context: "背景", mode: "standalone" }, exec())) as ToolValue;
     expect(lossless(value)).toBeNull();
     expect(value).toMatchObject({ advice: "意见：可以。", model: "z-ai/glm-5.4", consultId: "child-abc", dual: false, truncated: false, attempts: [{ label: "z-ai/glm-5.4", ok: true }] });
     // The undeclared effort was dropped and reported.
     expect(value.notes.join("\n")).toContain("推理档位「max」");
     expect(JSON.parse(JSON.stringify(value))).toEqual(value);
-    const meta = tool.output.presentationMeta!({ question: "q?", mode: "standalone" }, value as never);
+    const meta = tool.output.presentationMeta!({ question: "问题？", mode: "standalone" }, value as never);
     expect(lossless(meta)).toBeNull();
     expect(meta).toMatchObject({ kind: "second-opinion", consultId: "child-abc", attempts: [{ label: "z-ai/glm-5.4", ok: true }] });
-    const rendered = tool.output.render({ question: "q?" }, value as never) as Array<{ type: string; text: string }>;
+    const rendered = tool.output.render({ question: "问题？" }, value as never) as Array<{ type: string; text: string }>;
     expect(rendered[0].text).toContain("consult_id: child-abc");
   });
 
@@ -94,14 +94,14 @@ describe("second_opinion tool", () => {
     const tool = createSecondOpinionTool(d);
     // An infrastructure fault rejects the activation promise; the tool reports it
     // as an actionable failure instead of throwing, and the chain does not continue.
-    const value = (await tool.execute({ question: "q?" }, exec())) as ToolValue;
+    const value = (await tool.execute({ question: "问题？" }, exec())) as ToolValue;
     expect(value.advice).toContain("顾问运行中断");
     expect(value.advice).toContain("boom");
     expect(value.attempts).toEqual([{ label: "z-ai/glm-5.4", ok: false, reason: "顾问运行中断（z-ai/glm-5.4）：boom" }]);
     expect(lossless(value)).toBeNull();
 
     host.optional = vi.fn(() => ({ allowedRoutes: () => [] })) as never;
-    const refused = (await tool.execute({ question: "q?" }, exec())) as ToolValue;
+    const refused = (await tool.execute({ question: "问题？" }, exec())) as ToolValue;
     expect(refused.advice).toContain("尚未授权给子代理");
     expect(refused.consultId).toBe("");
     expect(lossless(refused)).toBeNull();
@@ -111,18 +111,18 @@ describe("second_opinion tool", () => {
     const d = deps(fakeHost("child-1", "x"));
     d.registry.record({ childId: "advisor-child", parentSessionId: "p", consultId: "advisor-child", label: `${ADVISOR_LABEL_PREFIX}x`, provider: "p", model: "m" });
     const tool = createSecondOpinionTool(d);
-    const value = (await tool.execute({ question: "q?" }, exec({ ...fakeParent(), id: "advisor-child" } as Agent))) as ToolValue;
+    const value = (await tool.execute({ question: "问题？" }, exec({ ...fakeParent(), id: "advisor-child" } as Agent))) as ToolValue;
     expect(value.advice).toContain("顾问子代理");
     expect(hostCalls(d)).toBe(0);
   });
 
-  it("answers in the plugin language inferred from an English question (language=auto)", async () => {
-    const d = deps(fakeHost("child-abc", "Looks fine."), { language: "auto" });
+  it("answers in the plugin language inferred from an English question", async () => {
+    const d = deps(fakeHost("child-abc", "Looks fine."));
     const tool = createSecondOpinionTool(d);
     const value = (await tool.execute({ question: "Is plan A sound?", mode: "standalone" }, exec())) as ToolValue;
     expect(value.advice).toBe("Looks fine.");
     expect(value.notes.join("\n")).toContain('Reasoning effort "max"');
-    const rendered = tool.output.render({ question: "q?" }, value as never) as Array<{ type: string; text: string }>;
+    const rendered = tool.output.render({ question: "问题？" }, value as never) as Array<{ type: string; text: string }>;
     expect(rendered[0].text).toContain("consult_id: child-abc");
     expect(rendered[0].text).not.toContain("追问");
   });
@@ -137,7 +137,7 @@ describe("second_opinion tool", () => {
     });
     const d = deps(host);
     const tool = createSecondOpinionTool(d);
-    const value = (await tool.execute({ question: "q?", mode: "standalone" }, exec())) as ToolValue;
+    const value = (await tool.execute({ question: "问题？", mode: "standalone" }, exec())) as ToolValue;
     expect(value.usage).toMatchObject({ inputTokens: 1500, outputTokens: 100, cacheReadTokens: 5000, cacheWriteTokens: 0 });
     expect(typeof value.usage!.durationMs).toBe("number");
     expect(lossless(value)).toBeNull();

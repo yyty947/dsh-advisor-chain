@@ -41,7 +41,6 @@ describe("normalizeConfig", () => {
       enabled: true,
       mode: "auto",
       contextMode: "inherited",
-      language: "auto",
       advisorPrompt: "",
       chain: [],
       followup: { maxRounds: 8 },

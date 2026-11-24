@@ -183,7 +183,7 @@ export function createSecondOpinionTool(deps: AdvisorDeps) {
     },
     async execute(args: ToolArgs, exec: ToolRunContext) {
       const cfg = deps.getConfig();
-      const lang = resolveLanguage(cfg.language, `${args.question ?? ""}\n${args.context ?? ""}\n${args.follow_up ?? ""}`);
+      const lang = resolveLanguage(`${args.question ?? ""}\n${args.context ?? ""}\n${args.follow_up ?? ""}`);
       const fail = (message: string): ToolValue => ({ advice: message, model: "", consultId: "", dual: false, truncated: false, attempts: [], notes: [] });
       if (!cfg.enabled) return fail(t(lang, "tool.disabled"));
       if (cfg.chain.length === 0) return fail(t(lang, "tool.noChain"));
@@ -386,7 +386,7 @@ interface BuiltPrompt {
  *  mode) the user's latest message, then assemble the advisor prompt. */
 function buildPrompt(deps: AdvisorDeps, parent: Agent, cfg: AdvisorConfig, mode: "inherited" | "standalone", question: string, context: string | undefined, notes: string[]): BuiltPrompt {
   if (mode === "standalone") {
-    const lang = resolveLanguage(cfg.language, `${question}\n${context ?? ""}`);
+    const lang = resolveLanguage(`${question}\n${context ?? ""}`);
     return { lang, text: buildAdvisorPrompt({ mode, lang, advisorPrompt: cfg.advisorPrompt, question, context }) };
   }
   let history: TranscriptMessageLike[] = [];
@@ -395,7 +395,7 @@ function buildPrompt(deps: AdvisorDeps, parent: Agent, cfg: AdvisorConfig, mode:
   } catch (error) {
     deps.log?.(`advisor: deriveMessages failed: ${error instanceof Error ? error.message : String(error)}`);
   }
-  const lang = resolveLanguage(cfg.language, `${lastUserText(history)}\n${question}\n${context ?? ""}`);
+  const lang = resolveLanguage(`${lastUserText(history)}\n${question}\n${context ?? ""}`);
   const transcript = buildTranscript(history, {
     maxChars: cfg.limits.transcriptMaxChars,
     perEntryMaxChars: cfg.limits.perEntryMaxChars,

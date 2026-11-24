@@ -3,11 +3,11 @@
  *
  * The host has no locale service for plugin text (the client's `ctx.locale`
  * lives in the browser), so the plugin carries its own flat dictionaries and
- * a tiny resolver. Which language applies is decided per call:
- * - `language: "zh" | "en"` forces one;
- * - `language: "auto"` (default) infers it from the text at hand — the user's
- *   last message for the system-prompt section, the question plus context for
- *   the advisor prompt and the results the main model reads.
+ * a tiny resolver. The language is always inferred from the text at hand —
+ * the user's last message for the system-prompt section, the question plus
+ * context for the advisor prompt and the results the main model reads — so
+ * the plugin exposes no language setting of its own: the UI follows the DSH
+ * locale, and model-facing text follows the conversation.
  *
  * Adding a language: add a dictionary with the same keys to `HOST_MESSAGES`
  * and to `Lang`; the client registers its own dictionaries with the host's
@@ -19,9 +19,8 @@
  */
 
 export type Lang = "zh" | "en";
-export type LanguageSetting = "auto" | Lang;
 
-/** Default used by `auto` when there is no text to infer from. */
+/** Default when there is no text to infer from. */
 export const AUTO_DEFAULT: Lang = "zh";
 
 const zh = {
@@ -318,8 +317,7 @@ export function detectLanguage(text: string): Lang | undefined {
   return cjk / (cjk + latin) >= 0.2 ? "zh" : "en";
 }
 
-/** Resolve the language for one call from the setting and the text at hand. */
-export function resolveLanguage(setting: LanguageSetting | undefined, sample: string): Lang {
-  if (setting === "zh" || setting === "en") return setting;
+/** Resolve the language for one call from the text at hand. */
+export function resolveLanguage(sample: string): Lang {
   return detectLanguage(sample) ?? AUTO_DEFAULT;
 }

@@ -27,11 +27,39 @@ export interface ChildObservation {
   turnEnds: number;
   /** Data of the most recent `turn/end`, for diagnostics. */
   lastTurnEnd?: unknown;
+  /** Token usage summed over the model requests of this epoch (`usage` stream chunks). */
+  usage: UsageTotals;
   /** Subscribe to `turn/end` on this child's session; returns an unsubscriber. */
   onTurnEnd(listener: () => void): () => void;
   ended: boolean;
   endInfo?: SubagentRunEndInfo;
   dispose(): void;
+}
+
+/** Sum of the `TokenUsage` records the child's model requests reported.
+ *  `inputTokens` is uncached input only; cache reads/writes are separate. */
+export interface UsageTotals {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  reasoningTokens: number;
+  /** Model requests that reported usage. */
+  requests: number;
+}
+
+export function emptyUsage(): UsageTotals {
+  return { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, requests: 0 };
+}
+
+function addUsage(total: UsageTotals, usage: { inputTokens?: unknown; outputTokens?: unknown; cacheReadTokens?: unknown; cacheWriteTokens?: unknown; reasoningTokens?: unknown }): void {
+  const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+  total.inputTokens += num(usage.inputTokens);
+  total.outputTokens += num(usage.outputTokens);
+  total.cacheReadTokens += num(usage.cacheReadTokens);
+  total.cacheWriteTokens += num(usage.cacheWriteTokens);
+  total.reasoningTokens += num(usage.reasoningTokens);
+  total.requests += 1;
 }
 
 /** Partial text is only a fallback when the settled result carries none. */
@@ -48,6 +76,7 @@ export function attachObservation(child: Agent, now: () => number = Date.now): C
     text: "",
     toolCalls: 0,
     turnEnds: 0,
+    usage: emptyUsage(),
     onTurnEnd: (listener) => {
       turnEndListeners.push(listener);
       return () => {
@@ -88,7 +117,9 @@ export function attachObservation(child: Agent, now: () => number = Date.now): C
     if (p.agent && p.agent !== child) return;
     const frame = p.frame;
     if (!frame || frame.type !== "chunk" || !frame.chunk) return;
-    if (frame.chunk.type === "text-delta" && typeof frame.chunk.text === "string") {
+    if (frame.chunk.type === "usage") {
+      addUsage(obs.usage, (frame.chunk as { usage?: Parameters<typeof addUsage>[1] }).usage ?? {});
+    } else if (frame.chunk.type === "text-delta" && typeof frame.chunk.text === "string") {
       obs.answerTextStarted = true;
       obs.lastAnswerTextAt = now();
       if (obs.text.length < TEXT_CAP) obs.text += frame.chunk.text;

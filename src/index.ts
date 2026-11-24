@@ -1,5 +1,6 @@
 import { setSandboxMode } from "@deepseek-ai/dsh-sandbox-policy";
 import { Config, normalizeConfig } from "./config";
+import { resolveLanguage } from "./i18n";
 import { RepeatPressureTracker } from "./pressure";
 import { buildSectionText } from "./prompt";
 import { createSecondOpinionTool } from "./tool";
@@ -46,8 +47,8 @@ export function apply(ctx: HostContext, _config: unknown) {
   // Read-only compatibility for sessions written by versions <= 0.3.9.
   installLegacyShim(undefined, log);
 
-  const pressure = new RepeatPressureTracker();
-  ctx.on("session/event", (session, event) => pressure.handleEvent((session as { id?: string } | undefined)?.id ?? "", event as Parameters<typeof pressure.handleEvent>[1]));
+  const pressureTracker = new RepeatPressureTracker();
+  ctx.on("session/event", (session, event) => pressureTracker.handleEvent((session as { id?: string } | undefined)?.id ?? "", event as Parameters<typeof pressureTracker.handleEvent>[1]));
 
   const host: HostServices = {
     subagents: ctx.subagents,
@@ -75,10 +76,12 @@ export function apply(ctx: HostContext, _config: unknown) {
           name: "dsh-advisor-chain-boundary",
           order: 151,
           // `session` is the documented field of AssembleContext; the optional
-          // `agent` augmentation is not relied upon.
+          // `agent` augmentation is not relied upon. The section's language
+          // follows the plugin setting, inferring from the user's latest message.
           text: (assembly) => {
             const cfg = liveConfig();
-            return buildSectionText(cfg, pressure.get(assembly?.session?.id), cfg.trigger.repeatThreshold);
+            const pressure = pressureTracker.get(assembly?.session?.id);
+            return buildSectionText(cfg, pressure, cfg.trigger.repeatThreshold, resolveLanguage(cfg.language, pressure?.text ?? ""));
           },
         }),
       "dsh-advisor-chain: system prompt section",

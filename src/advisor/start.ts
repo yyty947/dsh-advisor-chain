@@ -2,6 +2,7 @@ import type { Agent, AgentOptions } from "@deepseek-ai/dsh-agent";
 import type { ReasoningEffortId } from "@deepseek-ai/dsh-llm";
 import type { SubagentActivation } from "@deepseek-ai/dsh-subagent";
 import type { ChainEntry } from "../config";
+import { t, type Lang } from "../i18n";
 import { advisorLabel, type AdvisorChildRecord, type AdvisorRegistry } from "./identify";
 import type { ChildObservation } from "./observe";
 import { classifySubagentError, type FailureClass } from "./result";
@@ -36,7 +37,7 @@ export function parentRouteOf(parent: Agent): { provider?: string; model?: strin
  * enforce it (only the model-facing tool does), so the plugin checks it
  * itself rather than quietly stepping over a setting the user made.
  */
-export function assertRouteAllowed(host: HostServices, parent: Agent, entry: ChainEntry): RouteCheck {
+export function assertRouteAllowed(host: HostServices, parent: Agent, entry: ChainEntry, lang: Lang = "zh"): RouteCheck {
   const svc = host.optional<AllowedRoutesService>("subagentModelSelection");
   if (!svc || typeof svc.allowedRoutes !== "function") return { ok: true };
   let routes: Array<{ provider: string; model: string }> | undefined;
@@ -46,25 +47,17 @@ export function assertRouteAllowed(host: HostServices, parent: Agent, entry: Cha
     return {
       ok: false,
       kind: "authorization",
-      message: `DSH 的「子代理模型选择」设置无效（${error instanceof Error ? error.message : String(error)}）。请到 设置 → 插件 → 子代理 修正后重试。`,
+      message: t(lang, "start.settingInvalid", { detail: error instanceof Error ? error.message : String(error) }),
     };
   }
   const route = `${entry.provider}/${entry.model}`;
   if (routes === undefined) {
     const parentRoute = parentRouteOf(parent);
     if (parentRoute.provider === entry.provider && parentRoute.model === entry.model) return { ok: true };
-    return {
-      ok: false,
-      kind: "authorization",
-      message: `DSH 的「子代理模型选择」当前是关闭的，顾问无法使用与主对话不同的模型（${route}）。请到 设置 → 顾问设置 点击「开启并授权」。`,
-    };
+    return { ok: false, kind: "authorization", message: t(lang, "start.selectionOff", { route }) };
   }
   if (routes.some((r) => r.provider === entry.provider && r.model === entry.model)) return { ok: true };
-  return {
-    ok: false,
-    kind: "authorization",
-    message: `模型 ${route} 尚未授权给子代理。请到 设置 → 顾问设置 点击「授权」，或在 设置 → 插件 → 子代理 的模型白名单里添加它。`,
-  };
+  return { ok: false, kind: "authorization", message: t(lang, "start.unauthorized", { route }) };
 }
 
 export type EntryOptionsResult = { ok: true; agentOptions: AgentOptions; effortIgnored: boolean } | Refusal;
@@ -74,7 +67,7 @@ export type EntryOptionsResult = { ok: true; agentOptions: AgentOptions; effortI
  * effort the model does not declare is dropped (and reported) instead of
  * letting the adapter reject the whole call.
  */
-export async function resolveEntryOptions(host: HostServices, entry: ChainEntry): Promise<EntryOptionsResult> {
+export async function resolveEntryOptions(host: HostServices, entry: ChainEntry, lang: Lang = "zh"): Promise<EntryOptionsResult> {
   let info: Awaited<ReturnType<HostServices["llm"]["resolveModelInfo"]>>;
   try {
     info = await host.llm.resolveModelInfo(entry.provider, entry.model);
@@ -82,7 +75,7 @@ export async function resolveEntryOptions(host: HostServices, entry: ChainEntry)
     return {
       ok: false,
       kind: "model",
-      message: `模型路由不可用（${entry.provider}/${entry.model}）：${error instanceof Error ? error.message : String(error)}`,
+      message: t(lang, "start.routeUnavailable", { route: `${entry.provider}/${entry.model}`, detail: error instanceof Error ? error.message : String(error) }),
     };
   }
   const efforts = (info?.reasoning?.efforts ?? []).map((e) => String(e.id));
@@ -102,8 +95,8 @@ export interface StartInput {
   entry: ChainEntry;
   entryLabel: string;
   promptText: string;
-  consultId: string;
   mode: "inherited" | "standalone";
+  lang?: Lang;
 }
 
 export type StartResult =
@@ -114,9 +107,10 @@ export type StartResult =
 export async function startAdvisor(host: HostServices, registry: AdvisorRegistry, input: StartInput): Promise<StartResult> {
   const parent = input.parent;
   const parentId = String(parent.id);
-  const route = assertRouteAllowed(host, parent, input.entry);
+  const lang = input.lang ?? "zh";
+  const route = assertRouteAllowed(host, parent, input.entry, lang);
   if (!route.ok) return route;
-  const options = await resolveEntryOptions(host, input.entry);
+  const options = await resolveEntryOptions(host, input.entry, lang);
   if (!options.ok) return options;
 
   registry.notePendingStart(parentId);
@@ -135,7 +129,7 @@ export async function startAdvisor(host: HostServices, registry: AdvisorRegistry
     });
   } catch (error) {
     const classified = classifySubagentError(error);
-    return { ok: false, kind: classified.kind, message: `无法启动顾问（${input.entryLabel}）：${classified.message}` };
+    return { ok: false, kind: classified.kind, message: t(lang, "start.cannotStart", { label: input.entryLabel, message: classified.message }) };
   } finally {
     registry.clearPendingStart(parentId);
   }
@@ -144,7 +138,7 @@ export async function startAdvisor(host: HostServices, registry: AdvisorRegistry
   const record = registry.record({
     childId,
     parentSessionId: parentId,
-    consultId: input.consultId,
+    consultId: "",
     label: advisorLabel(input.entryLabel),
     provider: input.entry.provider,
     model: input.entry.model,
@@ -152,14 +146,7 @@ export async function startAdvisor(host: HostServices, registry: AdvisorRegistry
   const observation = registry.observation(childId);
   if (record.sandbox === "failed" || !observation) {
     await activation.dispose().catch(() => {});
-    return {
-      ok: false,
-      kind: "infrastructure",
-      message:
-        record.sandbox === "failed"
-          ? "无法把顾问限制在只读沙箱内，已中止本次咨询。"
-          : "未能确认顾问子代理的身份（宿主未提供子代理描述符），已中止本次咨询。",
-    };
+    return { ok: false, kind: "infrastructure", message: t(lang, record.sandbox === "failed" ? "start.sandboxFailed" : "start.unrecognized") };
   }
   return { ok: true, activation, observation, record, effortIgnored: options.effortIgnored };
 }

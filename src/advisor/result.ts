@@ -2,6 +2,7 @@ import { SubagentError } from "@deepseek-ai/dsh-subagent";
 import type { SubagentResult, SubagentStopReason } from "@deepseek-ai/dsh-subagent";
 import type { LlmFailure } from "@deepseek-ai/dsh-llm";
 import { contentText, type ChildObservation } from "./observe";
+import { t, type HostKey, type Lang } from "../i18n";
 
 /** How a failure should route the chain. */
 export type FailureClass = "infrastructure" | "authorization" | "model" | "other";
@@ -35,45 +36,46 @@ export function classifySubagentError(error: unknown): ClassifiedError {
   return { kind: "other", message: error instanceof Error ? error.message : String(error) };
 }
 
-const FAILURE_CATEGORIES: Array<[RegExp, string]> = [
-  [/CONTEXT_WINDOW_EXCEEDED/i, "上下文超限"],
-  [/RATE_LIMIT/i, "限流"],
-  [/TIMEOUT/i, "超时"],
-  [/TRANSPORT|ECONNRESET|EOF/i, "网络错误"],
-  [/SERVER|PI_AI_ERROR/i, "服务端错误"],
-  [/AUTH|CREDENTIAL|ACCOUNT_|SIGN_IN/i, "鉴权失败"],
-  [/QUOTA/i, "额度不足"],
-  [/CONTENT_REFUSED|refusal/i, "内容被拒"],
-  [/EMPTY_RESPONSE/i, "空响应"],
-  [/MODEL_UNSUPPORTED|INVALID_MODEL|MODEL_DOES_NOT/i, "模型不可用"],
-  [/INVALID_REQUEST|INVALID_RESPONSE|MALFORMED_RESPONSE/i, "请求或响应无效"],
+/** Provider failure code → dictionary key of its readable category. */
+const FAILURE_CATEGORIES: Array<[RegExp, HostKey]> = [
+  [/CONTEXT_WINDOW_EXCEEDED/i, "failure.contextWindow"],
+  [/RATE_LIMIT/i, "failure.rateLimit"],
+  [/TIMEOUT/i, "failure.timeout"],
+  [/TRANSPORT|ECONNRESET|EOF/i, "failure.transport"],
+  [/SERVER|PI_AI_ERROR/i, "failure.server"],
+  [/AUTH|CREDENTIAL|ACCOUNT_|SIGN_IN/i, "failure.auth"],
+  [/QUOTA/i, "failure.quota"],
+  [/CONTENT_REFUSED|refusal/i, "failure.refused"],
+  [/EMPTY_RESPONSE/i, "failure.empty"],
+  [/MODEL_UNSUPPORTED|INVALID_MODEL|MODEL_DOES_NOT/i, "failure.modelUnavailable"],
+  [/INVALID_REQUEST|INVALID_RESPONSE|MALFORMED_RESPONSE/i, "failure.invalidRequest"],
 ];
 
-export function describeFailureCode(code: string): string {
-  for (const [pattern, label] of FAILURE_CATEGORIES) if (pattern.test(code)) return label;
+export function describeFailureCode(code: string, lang: Lang = "zh"): string {
+  for (const [pattern, key] of FAILURE_CATEGORIES) if (pattern.test(code)) return t(lang, key);
   return code;
 }
 
 function clipMessage(text: string, max = 300): string {
-  const t = text.trim();
-  return t.length > max ? `${t.slice(0, max)}…` : t;
+  const trimmed = text.trim();
+  return trimmed.length > max ? `${trimmed.slice(0, max)}…` : trimmed;
 }
 
 /** Human-readable reason from the child's own request failures; the last one wins. */
-export function describeFailures(failures: readonly LlmFailure[]): string | undefined {
+export function describeFailures(failures: readonly LlmFailure[], lang: Lang = "zh"): string | undefined {
   const last = failures[failures.length - 1];
   if (!last) return undefined;
-  const category = describeFailureCode(last.code);
-  const status = typeof last.status === "number" ? `（HTTP ${last.status}）` : "";
+  const category = describeFailureCode(last.code, lang);
+  const withStatus = typeof last.status === "number" ? t(lang, "failure.withStatus", { category, status: last.status }) : category;
   const detail = clipMessage(last.message ?? "");
-  return detail && detail !== category ? `${category}${status}：${detail}` : `${category}${status}`;
+  return detail && detail !== category ? t(lang, "failure.withDetail", { category: withStatus, detail }) : withStatus;
 }
 
-const STOP_REASON_LABELS: Record<string, string> = {
-  error: "顾问运行出错",
-  aborted: "顾问被中止",
-  "max-tokens": "顾问输出达到 maxTokens 上限",
-  refusal: "顾问拒绝回答",
+const STOP_REASON_KEYS: Record<string, HostKey> = {
+  error: "stop.error",
+  aborted: "stop.aborted",
+  "max-tokens": "stop.maxTokens",
+  refusal: "stop.refusal",
 };
 
 export interface AdvisorOutcome {
@@ -90,19 +92,14 @@ export interface AdvisorOutcome {
 
 export type AbortReason = "deadline" | "idle" | "hard-cap";
 
-export function settleOutcome(input: { result?: SubagentResult; observation: ChildObservation; abortedBy?: AbortReason }): AdvisorOutcome {
+export function settleOutcome(input: { result?: SubagentResult; observation: ChildObservation; abortedBy?: AbortReason; lang?: Lang }): AdvisorOutcome {
   const { result, observation, abortedBy } = input;
+  const lang = input.lang ?? "zh";
   const settledText = result ? contentText(result.output) : "";
   const text = settledText || observation.text.trim();
   const stopReason = result?.stopReason ?? observation.endInfo?.stopReason;
   if (abortedBy && text) {
-    return {
-      ok: true,
-      content: text,
-      stopReason,
-      truncated: true,
-      failures: observation.failures,
-    };
+    return { ok: true, content: text, stopReason, truncated: true, failures: observation.failures };
   }
   if (stopReason === "completed" && text && !abortedBy) {
     return { ok: true, content: text, stopReason, truncated: false, failures: observation.failures };
@@ -110,16 +107,16 @@ export function settleOutcome(input: { result?: SubagentResult; observation: Chi
   // The stop reason is the authoritative account of how the run ended; a
   // recorded request failure (e.g. a 429 that was then retried successfully)
   // is appended as detail, never promoted above it.
-  const stopLabel = stopReason ? STOP_REASON_LABELS[stopReason] ?? stopReason : undefined;
-  const requestFailure = describeFailures(observation.failures);
-  const timeoutLabel =
-    abortedBy === "deadline" ? "超时：到点时尚未开始输出回答正文" : abortedBy === "idle" ? "超时：回答中断后长时间无新输出" : abortedBy === "hard-cap" ? "超时：超过总时长上限" : undefined;
+  const stopLabel = stopReason ? STOP_REASON_KEYS[stopReason] ?? undefined : undefined;
+  const requestFailure = describeFailures(observation.failures, lang);
+  const timeoutKey: HostKey | undefined =
+    abortedBy === "deadline" ? "timeout.deadline" : abortedBy === "idle" ? "timeout.idle" : abortedBy === "hard-cap" ? "timeout.hardCap" : undefined;
   let reason: string;
-  if (timeoutLabel) reason = requestFailure ? `${timeoutLabel}（最后一次请求错误：${requestFailure}）` : timeoutLabel;
-  else if (stopReason === "completed") reason = "顾问正常结束但未返回任何内容（空响应）";
-  else if (stopLabel && stopReason !== "error") reason = requestFailure ? `${stopLabel}（最后一次请求错误：${requestFailure}）` : stopLabel;
-  else reason = requestFailure ?? stopLabel ?? "未知原因（顾问未返回内容）";
-  if (/上下文超限/.test(reason)) reason += "。可在设置里调低抄本预算，或改用盲审模式并在 context 里只写要点";
+  if (timeoutKey) reason = requestFailure ? t(lang, "timeout.withFailure", { reason: t(lang, timeoutKey), detail: requestFailure }) : t(lang, timeoutKey);
+  else if (stopReason === "completed") reason = t(lang, "stop.empty");
+  else if (stopLabel && stopReason !== "error") reason = requestFailure ? t(lang, "stop.withFailure", { reason: t(lang, stopLabel), detail: requestFailure }) : t(lang, stopLabel);
+  else reason = requestFailure ?? (stopLabel ? t(lang, stopLabel) : t(lang, "stop.unknown"));
+  if (reason.includes(t(lang, "failure.contextWindow"))) reason += t(lang, "stop.contextHint");
   return { ok: false, content: text, stopReason, truncated: false, failure: reason, failures: observation.failures };
 }
 
@@ -132,6 +129,8 @@ export interface TimeoutPolicy {
 }
 
 export const DEFAULT_IDLE_GRACE_MS = 30_000;
+/** How long a disposed/interrupted child may take to settle before the wait gives up. */
+export const ABORT_SETTLE_GRACE_MS = 5_000;
 
 export function hardCapOf(timeoutMs: number): number {
   return Math.max(3 * timeoutMs, 10 * 60_000);
@@ -146,6 +145,7 @@ export interface WaitInput<T> {
   now?: () => number;
   /** Caller cancellation: abort the child, then rethrow. */
   signal?: AbortSignal;
+  lang?: Lang;
 }
 
 export interface WaitResult<T> {
@@ -168,14 +168,15 @@ const sleep = (ms: number, signal?: AbortSignal) =>
   });
 
 /**
- * Await `run` under the advisor timeout rule (design §6): the deadline is hard
- * while the child has produced no answer text; once answer text exists the
+ * Await `run` under the advisor timeout rule (architecture §4): the deadline is
+ * hard while the child has produced no answer text; once answer text exists the
  * rule switches to an idle timer; a hard cap bounds the total. `abort` is
  * invoked once and `run` is still awaited so the settled result (partial
  * output) is available.
  */
 export async function waitWithTimeout<T>(input: WaitInput<T>): Promise<WaitResult<T>> {
   const now = input.now ?? Date.now;
+  const lang = input.lang ?? "zh";
   const start = now();
   const deadline = start + input.policy.timeoutMs;
   const grace = input.policy.idleGraceMs ?? DEFAULT_IDLE_GRACE_MS;
@@ -215,15 +216,15 @@ export async function waitWithTimeout<T>(input: WaitInput<T>): Promise<WaitResul
   };
 
   while (!settled && !rejected) {
-    const t = now();
+    const time = now();
     if (abortedBy === undefined) {
-      if (t >= hardCap) {
+      if (time >= hardCap) {
         abortNow("hard-cap");
-      } else if (t >= deadline) {
+      } else if (time >= deadline) {
         if (input.observation()?.answerTextStarted) {
           // Answer text has begun: only a quiet period may end it now.
-          const idleAt = (input.observation()?.lastAnswerTextAt ?? t) + grace;
-          if (t >= idleAt) abortNow("idle");
+          const idleAt = (input.observation()?.lastAnswerTextAt ?? time) + grace;
+          if (time >= idleAt) abortNow("idle");
           else {
             await cancelOnAbort(Math.min(idleAt, hardCap));
             continue;
@@ -245,13 +246,10 @@ export async function waitWithTimeout<T>(input: WaitInput<T>): Promise<WaitResul
       if (!settled) throw error;
     }
     if (!settled && !rejected && now() - abortedAt >= ABORT_SETTLE_GRACE_MS) {
-      throw new Error(`顾问中止后 ${ABORT_SETTLE_GRACE_MS / 1000} 秒内未结束`);
+      throw new Error(t(lang, "wait.neverSettled", { seconds: ABORT_SETTLE_GRACE_MS / 1000 }));
     }
   }
   // The run itself failed (infrastructure fault): surface it unchanged.
   if (rejected) throw rejected.error;
   return { value: settled!.value, abortedBy };
 }
-
-/** How long a disposed/interrupted child may take to settle before the wait gives up. */
-export const ABORT_SETTLE_GRACE_MS = 5_000;

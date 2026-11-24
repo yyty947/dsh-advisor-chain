@@ -1,12 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { buildSectionText } from "../src/prompt";
-import { DEFAULT_ADVISOR_PROMPT, normalizeConfig } from "../src/config";
+import { normalizeConfig } from "../src/config";
 
 const base = {
   enabled: true,
   mode: "auto" as const,
   contextMode: "inherited" as const,
-  advisorPrompt: DEFAULT_ADVISOR_PROMPT,
+  language: "auto" as const,
+  advisorPrompt: "custom prompt",
   chain: [{ provider: "p", model: "m" }],
   followup: { maxRounds: 8 },
   legacyNoticeDismissed: false,

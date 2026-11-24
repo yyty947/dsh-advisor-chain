@@ -11,7 +11,7 @@ DSH 几乎每天发版，且多为预发布。每次升级宿主后、以及每�
 | 3 | `subagent/start` 在子代理创建后、首条提示入队前同步发出；`subagent/descriptor` 在 setup 阶段写入 | 读 `dsh-subagent/src/manager.ts`，搜 `subagent/start` 与 `appendDelegatedPolicyOverrides` | 顾问识别不到 → fail-closed 中止咨询；或有子会话未被套 read-only（有回读校验兜底） |
 | 4 | `overrideOf()` 读异步投影；日志里的 `sandbox/mode` 事件是权威 | `dsh-sandbox-policy/src/index.ts` | 只读回读误判 |
 | 5 | `KNOWN_SESSION_EVENT_TYPES` 未被 `Object.freeze`；读路径对未知非 ignorable 类型仍拒绝重建 | `dsh-session/src/known-event-types.ts`、`surface.js` 的 `surfaceOpOf` | 垫片退化为日志告警；旧会话打不开 |
-| 6 | `Session.snapshotEvents()` 仍可用（已标 `@deprecated`） | `dsh-session/src/index.ts` | 多处读取失败（抄本、沙箱回读、追问计数） |
+| 6 | `Session.snapshotEvents()` 已标 `@deprecated`，目前只作回退（跟踪器没见到该会话时）；主路径是 `session/event` 是否对**每条**追加事件（含子会话建立阶段的 `subagent/descriptor`、`sandbox/mode`）都发出 | 在宿主源码里搜 `session/event` 的 emit 点；冒烟第 7 条（追问） | 追问被拒为「不是本插件建立的线程」或顾问识别退化到 pending-start 回退 |
 | 7 | `tool.call.toolview` keyed slot；`block.args` 为 `PartialArguments` 读取器；`block.meta` 携带 `presentationMeta` | `dsh-client-ui-tool/src/client/contract/slots.ts`、`tool/ToolCallTree.tsx` | 卡片不渲染或参数读不到 |
 | 8 | `remote.settings.update` 为 merge 语义、数组整体替换；`SettingsConflictError` 文案 | `dsh-settings/src/index.ts` | 设置页保存 / 授权异常 |
 | 9 | `settings.section.icon` slot 存在 | 同 7 | 侧栏回退默认齿轮（无害） |
@@ -27,6 +27,7 @@ DSH 几乎每天发版，且多为预发布。每次升级宿主后、以及每�
 4. 继承模式咨询一次：结果 notes 里的抄本省略 / 截断计数合理。
 5. 打开一个 0.3.9 期间咨询过的旧会话：能打开，旧卡片带「旧版记录」徽章。
 6. 设置页：链条目状态、授权按钮、横幅（若未.dismissed）、保存。
+7. 咨询后追问一次：顾问记得上一轮（跟踪器从 `session/event` 读到了子会话的 descriptor 与回答）。
 
 ## 3. 抬高 `engines.dsh` 下限时
 

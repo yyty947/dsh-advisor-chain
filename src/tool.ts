@@ -191,7 +191,7 @@ export function createSecondOpinionTool(deps: AdvisorDeps) {
 
       const parent = exec.agent as Agent | undefined;
       if (!parent) return fail(t(lang, "tool.noSession"));
-      if (deps.registry.isAdvisor(String(parent.id)) || isAdvisorChild(parent)) return fail(t(lang, "tool.isAdvisor"));
+      if (deps.registry.isAdvisor(String(parent.id)) || isAdvisorChild(deps.registry, parent)) return fail(t(lang, "tool.isAdvisor"));
 
       // ---------- follow-up branch ----------
       if (args.consult_id) {
@@ -455,9 +455,15 @@ function usageOf(observation: { usage?: { requests: number; inputTokens: number;
   return { inputTokens: usage.inputTokens, outputTokens: usage.outputTokens, cacheReadTokens: usage.cacheReadTokens, cacheWriteTokens: usage.cacheWriteTokens, durationMs };
 }
 
-function isAdvisorChild(agent: Agent): boolean {
+/** Whether the calling agent is itself an advisor child: its own log's descriptor carries our label prefix. */
+function isAdvisorChild(registry: AdvisorRegistry, agent: Agent): boolean {
+  const id = String(agent.id);
+  const tracked = registry.events?.descriptorOf(id);
+  if (tracked !== undefined) return typeof tracked.label === "string" && tracked.label.startsWith(ADVISOR_LABEL_PREFIX);
+  const session = agent.session as { snapshotEvents?: () => readonly unknown[] };
+  if (typeof session.snapshotEvents !== "function") return false;
   try {
-    const descriptor = foldSubagentDescriptor(agent.session.snapshotEvents());
+    const descriptor = foldSubagentDescriptor(session.snapshotEvents() as never);
     return typeof descriptor?.label === "string" && descriptor.label.startsWith(ADVISOR_LABEL_PREFIX);
   } catch {
     return false;

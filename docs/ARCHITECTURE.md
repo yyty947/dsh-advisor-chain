@@ -38,6 +38,7 @@ src/
 | `ctx.subagents.startActivation(spec)` | `provider: 'spawn'`、`delivery: 'caller'`、`agentOptions`（provider / model / reasoningEffort / maxTokens）、`maxDepth`、`prompt: ContentBlock[]` | 启动顾问；`maxDepth = delegationDepthOf(parent) + 1` |
 | `SubagentActivation.result` | 失败不 reject，给 `stopReason`（completed / aborted / error / max-tokens / refusal）；本地结果**没有** diagnostic | 失败原因改从子代理作用域的 `agent/request-error` 采集 |
 | `subagent/start` / `subagent/end` | start 在子代理创建后、首条提示入队前**同步**发出 | 识别顾问子会话、套 read-only、挂观察 |
+| `session/event`（全会话） | 每条追加的事件都经它发出，含子会话建立阶段的 `subagent/descriptor`、`sandbox/mode` | `SessionEventLog`（`src/advisor/eventlog.ts`）在内存里保留每个会话日志的头部 + 滚动尾部；descriptor、沙箱回读、追问回答都从这里读。`snapshotEvents()`（宿主已标 deprecated）只剩跟踪器没见到该会话时的回退 |
 | 子会话 `subagent/descriptor` 事件 | 在 setup 阶段写入，先于 start；含 `label` | 以 `second-opinion:` 前缀识别自己的子会话；`subagent/start` 的 payload 里没有 label |
 | `setSandboxMode(session,'read-only')` | `@deepseek-ai/dsh-sandbox-policy` 导出；日志追加，按会话生效，冷恢复保留 | 只读保证；回读以**会话日志**最后一条 `sandbox/mode` 为准（`overrideOf()` 读的是异步投影，刚追加后可能还是旧值） |
 | `ctx.subagents.sendMessage` / `interrupt` | 冷恢复同一子会话；`interrupt` 需 `{kind:'ancestor', agent}` | 追问；超时中止 |

@@ -1,4 +1,5 @@
 import { ADVISOR_PRESET_ID, applyAdvisorToolMask, registerAdvisorPreset, type PresetRegistryLike, type RestrictableTools } from "./advisor/preset";
+import { SessionEventLog } from "./advisor/eventlog";
 import { setSandboxMode } from "@deepseek-ai/dsh-sandbox-policy";
 import { Config, normalizeConfig } from "./config";
 import { resolveLanguage } from "./i18n";
@@ -58,7 +59,12 @@ export function apply(ctx: HostContext, _config: unknown) {
   installLegacyShim(undefined, log);
 
   const pressureTracker = new RepeatPressureTracker();
-  ctx.on("session/event", (session, event) => pressureTracker.handleEvent((session as { id?: string } | undefined)?.id ?? "", event as Parameters<typeof pressureTracker.handleEvent>[1]));
+  const eventLog = new SessionEventLog();
+  ctx.on("session/event", (session, event) => {
+    const sessionId = (session as { id?: string } | undefined)?.id ?? "";
+    eventLog.handleEvent(sessionId, event as Parameters<typeof eventLog.handleEvent>[1]);
+    pressureTracker.handleEvent(sessionId, event as Parameters<typeof pressureTracker.handleEvent>[1]);
+  });
 
   const host: HostServices = {
     subagents: ctx.subagents,
@@ -70,6 +76,7 @@ export function apply(ctx: HostContext, _config: unknown) {
   };
   const registry = new AdvisorRegistry({
     host,
+    events: eventLog,
     sandbox: {
       setSandboxMode: (session, mode) => setSandboxMode(session as never, mode),
       overrideOf: (session) => ctx.sandboxPolicy?.overrideOf(session),

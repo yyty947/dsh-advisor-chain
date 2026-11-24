@@ -75,7 +75,14 @@ src/
 
 ## 6. 成本结构
 
-顾问子代理继承主代理的完整组成：整份系统提示（技能目录、全部工具说明、second_opinion 自己的使用边界）加上全部工具 schema。维护者机器上，**空白会话的首次咨询输入约 48k token，输出几百**——几乎全是继承来的组成，与抄本无关。这是下一版顾问 preset 的目标：精简系统提示、只挂只读工具（`tool-fs` 的 read、`tool-fs-search` 的 grep/glob），按包名挂载以不受替换工具类插件影响，激活失败时回退为继承。
+顾问子代理继承主代理的完整组成：整份系统提示（技能目录、全部工具说明、second_opinion 自己的使用边界）加上全部工具 schema。维护者机器上，**空白会话的首次咨询输入约 48k token，输出几百**——几乎全是继承来的组成，与抄本无关。
+
+下一版顾问 preset 的设计（待实现）：
+- 按**包名**挂载内置包，不受替换工具类插件（如 dsh-ops 改写出厂预设）影响：`tool-fs` 只开 `read` + `readImage`（`write` / `edit` / `applyPatch` 关闭），`tool-fs-search`（grep / glob），`tool-pwsh` / `tool-bash`（只读命令，可选），compaction 组（防读文件撑爆上下文）。
+- 用 `ToolRestriction` 允许名单（`read` / `read_image` / `glob` / `grep` / `pwsh`）把**继承来的**工具全部挡住——包括宿主级注册的 MCP 工具和 second_opinion 自己；本作用域注册的工具豁免。
+- 不挂：技能目录、规划、委派、todo、ask-user、web、cordis、present、office、plugin-manager。`agent-instructions`（项目的 AGENTS.md，上限 64KB）默认不挂，做成可选项。
+- 我们的系统提示段对顾问会话返回空串（按会话的 preset 判断），避免顾问看到 second_opinion 的使用边界。
+- 启动前 `ctx.agentPresets.resolve(id)`，preset 激活失败则回退为继承主对话组成并在结果里注明；设置里可强制「继承」。
 
 ## 7. 已知限制
 

@@ -3,7 +3,7 @@ import { SubagentError } from "@deepseek-ai/dsh-subagent";
 import type { SubagentActivation } from "@deepseek-ai/dsh-subagent";
 import type { Agent } from "@deepseek-ai/dsh-agent";
 import { ADVISOR_LABEL_PREFIX, AdvisorRegistry } from "../src/advisor/identify";
-import { attachObservation, type ChildObservation } from "../src/advisor/observe";
+import { attachObservation, emptyUsage, type ChildObservation } from "../src/advisor/observe";
 import { beginFollowUp, threadFactsFromEvents } from "../src/advisor/followup";
 import { buildAdvisorPrompt } from "../src/advisor/preamble";
 import { assertRouteAllowed, parentRouteOf, resolveEntryOptions, startAdvisor } from "../src/advisor/start";
@@ -69,6 +69,7 @@ function observationOf(overrides: Partial<ChildObservation> = {}): ChildObservat
     text: "",
     toolCalls: 0,
     turnEnds: 0,
+    usage: emptyUsage(),
     onTurnEnd: () => () => {},
     ended: false,
     dispose: () => {},
@@ -371,18 +372,17 @@ describe("startAdvisor", () => {
       entry: { provider: "z-ai", model: "glm-5.4" },
       entryLabel: "z-ai/glm-5.4",
       promptText: "prompt",
-      consultId: "consult-1",
       mode: "inherited",
     });
     expect(r.ok).toBe(true);
     const spec = (host.subagents.startActivation as ReturnType<typeof vi.fn>).mock.calls[0][0];
     expect(spec).toMatchObject({ provider: "spawn", label: `${ADVISOR_LABEL_PREFIX}z-ai/glm-5.4`, delivery: "caller", maxDepth: 1, agentOptions: { provider: "z-ai", model: "glm-5.4" } });
-    expect(registry.get("child-1")?.consultId).toBe("consult-1");
+    expect(registry.get("child-1")?.consultId).toBe(""); // the tool records consult_id once the child wins
   });
   it("refuses before starting when the route is not authorized", async () => {
     const host = fakeHost({ subagentModelSelection: { allowedRoutes: () => [] } });
     const registry = new AdvisorRegistry({ host, sandbox: sandboxFn() });
-    const r = await startAdvisor(host, registry, { parent: parent(), signal: new AbortController().signal, entry: { provider: "z-ai", model: "glm-5.4" }, entryLabel: "x", promptText: "p", consultId: "c", mode: "inherited" });
+    const r = await startAdvisor(host, registry, { parent: parent(), signal: new AbortController().signal, entry: { provider: "z-ai", model: "glm-5.4" }, entryLabel: "x", promptText: "p", mode: "inherited" });
     expect(r.ok).toBe(false);
     expect(host.subagents.startActivation).not.toHaveBeenCalled();
   });
@@ -390,7 +390,7 @@ describe("startAdvisor", () => {
     const host = fakeHost();
     host.subagents.startActivation = vi.fn(async () => { throw new SubagentError("full", "ACTIVATION_LIMIT_REACHED"); });
     const registry = new AdvisorRegistry({ host, sandbox: sandboxFn() });
-    const r = await startAdvisor(host, registry, { parent: parent(), signal: new AbortController().signal, entry: { provider: "z-ai", model: "glm-5.4" }, entryLabel: "x", promptText: "p", consultId: "c", mode: "inherited" });
+    const r = await startAdvisor(host, registry, { parent: parent(), signal: new AbortController().signal, entry: { provider: "z-ai", model: "glm-5.4" }, entryLabel: "x", promptText: "p", mode: "inherited" });
     expect(r).toMatchObject({ ok: false, kind: "infrastructure" });
 
     const dispose = vi.fn(async () => {});
@@ -402,7 +402,7 @@ describe("startAdvisor", () => {
     const registry2 = new AdvisorRegistry({ host, sandbox: controls, descriptorOf: () => ({ label: `${ADVISOR_LABEL_PREFIX}x` }) });
     registry2.install();
     host.agents.get = vi.fn(() => fakeAgent("child-2"));
-    const r2 = await startAdvisor(host, registry2, { parent: parent(), signal: new AbortController().signal, entry: { provider: "z-ai", model: "glm-5.4" }, entryLabel: "x", promptText: "p", consultId: "c", mode: "inherited" });
+    const r2 = await startAdvisor(host, registry2, { parent: parent(), signal: new AbortController().signal, entry: { provider: "z-ai", model: "glm-5.4" }, entryLabel: "x", promptText: "p", mode: "inherited" });
     expect(r2).toMatchObject({ ok: false, kind: "infrastructure" });
     expect(dispose).toHaveBeenCalled();
   });
@@ -480,14 +480,14 @@ describe("follow-up validation", () => {
 
 describe("advisor prompt", () => {
   it("frames the advisor as a read-only consultant answering the main agent in both modes", () => {
-    const inherited = buildAdvisorPrompt({ mode: "inherited", advisorPrompt: "persona", question: "q", context: "ctx", transcriptText: "T", transcriptDropped: 3, transcriptClipped: 1 });
+    const inherited = buildAdvisorPrompt({ mode: "inherited", lang: "zh", advisorPrompt: "persona", question: "q", context: "ctx", transcriptText: "T", transcriptDropped: 3, transcriptClipped: 1 });
     expect(inherited).toContain("你的读者是主代理");
     expect(inherited).toContain("不得创建、修改或删除任何文件");
     expect(inherited).toContain("已省略更早的 3 条消息");
     expect(inherited).toContain("有 1 条内容因过长被截断");
     expect(inherited).toContain("【对话外补充背景】\nctx");
     expect(inherited.endsWith("【问题】\nq")).toBe(false);
-    const blind = buildAdvisorPrompt({ mode: "standalone", advisorPrompt: "persona", question: "q" });
+    const blind = buildAdvisorPrompt({ mode: "standalone", lang: "zh", advisorPrompt: "persona", question: "q" });
     expect(blind).toContain("你看不到主对话");
     expect(blind).toContain("盲审");
     expect(blind).not.toContain("【对话抄本】");

@@ -7,9 +7,10 @@
  * - system / developer messages are dropped (the harness prompt is not the
  *   advisor's business);
  * - user-role messages are labeled by their producer: a real user message is
- *   `[用户]`, anything injected on the user's behalf (skill catalogs,
- *   environment snapshots, agent relays, notices) is `[注入：<kind>/<form>]`
- *   so the advisor never mistakes harness context for something the user said;
+ *   `用户`/`User`, anything injected on the user's behalf (skill catalogs,
+ *   environment snapshots, agent relays, notices) is labeled as an injection
+ *   with its source kind, so the advisor never mistakes harness context for
+ *   something the user said;
  * - assistant tool calls keep their NAME AND ARGUMENTS (the advisor must see
  *   what was read and what was changed); reasoning blocks are skipped;
  * - tool results are labeled, failures marked, and every entry is clipped;
@@ -18,7 +19,11 @@
  * - the newest window that fits the budget is kept, dropped older entries are
  *   counted, and the FIRST user request is preserved as a short head summary
  *   so long sessions do not lose the original task.
+ *
+ * Labels follow the advisor prompt's language (`options.lang`).
  */
+
+import { t, type Lang } from "./i18n";
 
 export interface TranscriptBlock {
   type?: string;
@@ -46,6 +51,8 @@ export interface TranscriptOptions {
   excludeToolName?: string;
   /** Character budget for the head summary of the first user request. */
   headSummaryMaxChars?: number;
+  /** Language for the labels; defaults to Chinese. */
+  lang?: Lang;
 }
 
 export interface TranscriptResult {
@@ -58,14 +65,11 @@ export interface TranscriptResult {
   truncated: boolean;
 }
 
-const USER_LABEL = "用户";
-const ASSISTANT_LABEL = "主模型";
-const TOOL_LABEL = "工具结果";
 const DEFAULT_HEAD_SUMMARY_MAX_CHARS = 600;
 
-function clip(text: string, maxChars: number): { text: string; clipped: boolean } {
+function clip(text: string, maxChars: number, lang: Lang): { text: string; clipped: boolean } {
   if (text.length <= maxChars) return { text, clipped: false };
-  return { text: `${text.slice(0, maxChars)}…（截断，原 ${text.length} 字符）`, clipped: true };
+  return { text: `${text.slice(0, maxChars)}${t(lang, "transcript.clipped", { count: text.length })}`, clipped: true };
 }
 
 function compactArgs(raw: unknown): string {
@@ -87,31 +91,30 @@ function safeStringify(value: unknown): string {
 }
 
 /** Label for a user-role message: the real user, or the injecting producer. */
-export function userEntryLabel(source: TranscriptMessageLike["source"]): string {
+export function userEntryLabel(source: TranscriptMessageLike["source"], lang: Lang = "zh"): string {
   const kind = source?.kind ?? "user";
-  if (kind === USER_LABEL || kind === "user") return USER_LABEL;
+  if (kind === "user") return t(lang, "transcript.user");
   const form = typeof source?.form === "string" && source.form ? `/${source.form}` : "";
-  return `注入：${kind}${form}`;
+  return t(lang, "transcript.injected", { source: `${kind}${form}` });
 }
 
 /** Render one content block; returns null for blocks the advisor should not see. */
-function blockToText(block: TranscriptBlock, perEntryMaxChars: number, excludedCallIds: ReadonlySet<unknown>, excludeToolName: string | undefined, clipped: { count: number }): string | null {
+function blockToText(block: TranscriptBlock, perEntryMaxChars: number, excludedCallIds: ReadonlySet<unknown>, excludeToolName: string | undefined, clipped: { count: number }, lang: Lang): string | null {
   if (block.type === "text" && typeof block.text === "string") {
-    const res = clip(block.text, perEntryMaxChars);
+    const res = clip(block.text, perEntryMaxChars, lang);
     if (res.clipped) clipped.count += 1;
     return res.text;
   }
   if (block.type === "reasoning") return null;
   if (block.type === "tool-call" && typeof block.name === "string") {
     if (excludeToolName && block.name === excludeToolName && excludedCallIds.has(block.id)) return null;
-    const args = clip(compactArgs(block.arguments), perEntryMaxChars);
+    const args = clip(compactArgs(block.arguments), perEntryMaxChars, lang);
     if (args.clipped) clipped.count += 1;
-    return `（工具调用 ${block.name}：${args.text || "{}"}）`;
+    return t(lang, "transcript.call", { name: block.name, args: args.text || "{}" });
   }
   if (block.type === "image" || block.type === "file") {
-    return `（${block.type === "image" ? "图片" : "文件"}附件，顾问无法直接查看；如有需要请用只读工具读取工作区中的对应文件）`;
+    return `（${t(lang, "transcript.attachment", { kind: t(lang, block.type === "image" ? "transcript.attachmentImage" : "transcript.attachmentFile") })}）`;
   }
-  if (block.type === "tool-addition" || block.type === "tool-removal") return null;
   return null;
 }
 
@@ -123,6 +126,7 @@ export function messageToEntry(
   excludedCallIds: ReadonlySet<unknown> = new Set(),
   excludeToolName?: string,
   clipped: { count: number } = { count: 0 },
+  lang: Lang = "zh",
 ): { label: string; text: string } | null {
   const role = message.role ?? "";
   if (role === "system" || role === "developer") return null;
@@ -131,19 +135,19 @@ export function messageToEntry(
     const source = message.source;
     // A notice is summarized by its one-line account; its body is noise.
     if (source?.form === "notice" && typeof source.summary === "string") {
-      return { label: userEntryLabel(source), text: source.summary };
+      return { label: userEntryLabel(source, lang), text: source.summary };
     }
-    const text = renderBlocks(message.content, perEntryMaxChars, excludedCallIds, excludeToolName, clipped);
-    return text ? { label: userEntryLabel(source), text } : null;
+    const text = renderBlocks(message.content, perEntryMaxChars, excludedCallIds, excludeToolName, clipped, lang);
+    return text ? { label: userEntryLabel(source, lang), text } : null;
   }
   if (role === "assistant") {
-    const text = renderBlocks(message.content, perEntryMaxChars, excludedCallIds, excludeToolName, clipped);
-    return text ? { label: ASSISTANT_LABEL, text } : null;
+    const text = renderBlocks(message.content, perEntryMaxChars, excludedCallIds, excludeToolName, clipped, lang);
+    return text ? { label: t(lang, "transcript.assistant"), text } : null;
   }
   if (role === "tool") {
-    const text = renderBlocks(message.content, perEntryMaxChars, excludedCallIds, excludeToolName, clipped);
+    const text = renderBlocks(message.content, perEntryMaxChars, excludedCallIds, excludeToolName, clipped, lang);
     if (!text) return null;
-    return { label: `${TOOL_LABEL}${message.isError ? "（失败）" : ""}`, text };
+    return { label: message.isError ? t(lang, "transcript.toolFailed") : t(lang, "transcript.tool"), text };
   }
   return null;
 }
@@ -151,13 +155,15 @@ export function messageToEntry(
 function renderBlocks(
   blocks: readonly TranscriptBlock[] | undefined,
   perEntryMaxChars: number,
-  excludedCallIds: ReadonlySet<unknown>,  excludeToolName: string | undefined,
+  excludedCallIds: ReadonlySet<unknown>,
+  excludeToolName: string | undefined,
   clipped: { count: number },
+  lang: Lang,
 ): string {
   if (!Array.isArray(blocks)) return "";
   const parts: string[] = [];
   for (const block of blocks) {
-    const rendered = blockToText(block, perEntryMaxChars, excludedCallIds, excludeToolName, clipped);
+    const rendered = blockToText(block, perEntryMaxChars, excludedCallIds, excludeToolName, clipped, lang);
     if (rendered !== null && rendered !== "") parts.push(rendered);
   }
   return parts.join("\n").trim();
@@ -173,17 +179,18 @@ function collectAnsweredCallIds(messages: readonly TranscriptMessageLike[]): Set
 }
 
 /** The first real user message, rendered as a short head summary. */
-function headSummaryOf(messages: readonly TranscriptMessageLike[], maxChars: number): string | null {
+function headSummaryOf(messages: readonly TranscriptMessageLike[], maxChars: number, lang: Lang): string | null {
   for (const message of messages) {
     if (message.role !== "user") continue;
     if (message.source?.kind !== undefined && message.source.kind !== "user") continue;
-    const text = renderBlocks(message.content, maxChars, new Set(), undefined, { count: 0 });
-    if (text) return clip(text, maxChars).text;
+    const text = renderBlocks(message.content, maxChars, new Set(), undefined, { count: 0 }, lang);
+    if (text) return clip(text, maxChars, lang).text;
   }
   return null;
 }
 
 export function buildTranscript(messages: readonly TranscriptMessageLike[], options: TranscriptOptions): TranscriptResult {
+  const lang = options.lang ?? "zh";
   const clipped = { count: 0 };
   const exclude = options.excludeToolName;
   // Every call to the excluded tool is in flight unless a result answers it.
@@ -203,7 +210,7 @@ export function buildTranscript(messages: readonly TranscriptMessageLike[], opti
   // original request can be restored as a short head summary.
   let firstUserEntryIndex = -1;
   messages.forEach((message) => {
-    const entry = messageToEntry(message, options.perEntryMaxChars, excludedCallIds, exclude, clipped);
+    const entry = messageToEntry(message, options.perEntryMaxChars, excludedCallIds, exclude, clipped, lang);
     if (!entry) return;
     if (firstUserEntryIndex < 0 && message.role === "user" && (message.source?.kind ?? "user") === "user") {
       firstUserEntryIndex = entries.length;
@@ -230,11 +237,11 @@ export function buildTranscript(messages: readonly TranscriptMessageLike[], opti
 
   const parts: string[] = [];
   if (dropped > 0) {
-    parts.push(`（为控制篇幅，已省略更早的 ${dropped} 条消息）`);
+    parts.push(t(lang, "transcript.dropped", { count: dropped }));
     // The original task is the one thing a tail window must not lose.
     if (firstUserEntryIndex >= 0 && firstUserEntryIndex < dropped) {
-      const head = headSummaryOf(messages, options.headSummaryMaxChars ?? DEFAULT_HEAD_SUMMARY_MAX_CHARS);
-      if (head) parts.push(`（最初的用户请求，可能已截断）\n${head}`);
+      const head = headSummaryOf(messages, options.headSummaryMaxChars ?? DEFAULT_HEAD_SUMMARY_MAX_CHARS, lang);
+      if (head) parts.push(`${t(lang, "transcript.headTitle")}\n${head}`);
     }
   }
   parts.push(...kept);

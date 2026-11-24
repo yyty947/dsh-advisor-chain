@@ -38,7 +38,8 @@ function fakeParent(): Agent {
 function fakeHost(childId: string, answer: string | Error) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const listeners: Record<string, Array<(...args: any[]) => unknown>> = {};
-  const child = { id: childId, session: { id: childId, snapshotEvents: () => [] }, ctx: { on: () => () => true } };
+  const childListeners: Record<string, Array<(...args: any[]) => unknown>> = {};
+  const child = { id: childId, status: "idle", session: { id: childId, snapshotEvents: () => [] }, ctx: { on: (name: string, l: (...args: any[]) => unknown) => { (childListeners[name] ??= []).push(l); return () => true; } } };
   const host = {
     subagents: {
       startActivation: vi.fn(async () => {
@@ -56,14 +57,16 @@ function fakeHost(childId: string, answer: string | Error) {
       (listeners[name] ??= []).push(listener);
       return () => true;
     },
+    emit: (name: string, ...args: unknown[]) => (listeners[name] ?? []).forEach((l) => l(...(args as never[]))),
+    emitChild: (name: string, ...args: unknown[]) => (childListeners[name] ?? []).forEach((l) => l(...args)),
   };
-  return host as unknown as HostServices;
+  return host as unknown as HostServices & { emit: (name: string, ...args: unknown[]) => void; emitChild: (name: string, ...args: unknown[]) => void };
 }
 
-function deps(host: HostServices) {
+function deps(host: HostServices, config: Record<string, unknown> = {}) {
   const registry = new AdvisorRegistry({ host, sandbox: { setSandboxMode: vi.fn(), overrideOf: vi.fn(() => "read-only") }, descriptorOf: () => ({ label: `${ADVISOR_LABEL_PREFIX}x` }), depthOf: () => 0 });
   registry.install();
-  return { host, registry, getConfig: () => normalizeConfig({ chain: [{ provider: "z-ai", model: "glm-5.4", reasoningEffort: "max" }], limits: { defaultTimeoutMs: 5000 } }) };
+  return { host, registry, getConfig: () => normalizeConfig({ language: "zh", chain: [{ provider: "z-ai", model: "glm-5.4", reasoningEffort: "max" }], limits: { defaultTimeoutMs: 5000 }, ...config }) };
 }
 
 const exec = (parent: Agent = fakeParent()) => ({ agent: parent, signal: new AbortController().signal }) as never;
@@ -111,6 +114,35 @@ describe("second_opinion tool", () => {
     const value = (await tool.execute({ question: "q?" }, exec({ ...fakeParent(), id: "advisor-child" } as Agent))) as ToolValue;
     expect(value.advice).toContain("顾问子代理");
     expect(hostCalls(d)).toBe(0);
+  });
+
+  it("answers in the plugin language inferred from an English question (language=auto)", async () => {
+    const d = deps(fakeHost("child-abc", "Looks fine."), { language: "auto" });
+    const tool = createSecondOpinionTool(d);
+    const value = (await tool.execute({ question: "Is plan A sound?", mode: "standalone" }, exec())) as ToolValue;
+    expect(value.advice).toBe("Looks fine.");
+    expect(value.notes.join("\n")).toContain('Reasoning effort "max"');
+    const rendered = tool.output.render({ question: "q?" }, value as never) as Array<{ type: string; text: string }>;
+    expect(rendered[0].text).toContain("consult_id: child-abc");
+    expect(rendered[0].text).not.toContain("追问");
+  });
+
+  it("reports the advisor's token usage when its stream carried usage chunks", async () => {
+    const host = fakeHost("child-u", "ok");
+    host.subagents.startActivation = vi.fn(async () => {
+      host.emit("subagent/start", { runId: "r", provider: "spawn", parentSessionId: "parent-1", id: "child-u", local: true });
+      host.emitChild("agent/assistant-stream", { agent: host.agents.get("child-u" as never), frame: { type: "chunk", chunk: { type: "usage", usage: { inputTokens: 1200, outputTokens: 80, cacheReadTokens: 5000 } } } });
+      host.emitChild("agent/assistant-stream", { agent: host.agents.get("child-u" as never), frame: { type: "chunk", chunk: { type: "usage", usage: { inputTokens: 300, outputTokens: 20 } } } });
+      return { childId: "child-u", name: "agent-1", result: Promise.resolve({ output: [{ type: "text", text: "ok" }], stopReason: "completed" }), dispose: vi.fn(async () => {}) } as unknown as SubagentActivation;
+    });
+    const d = deps(host);
+    const tool = createSecondOpinionTool(d);
+    const value = (await tool.execute({ question: "q?", mode: "standalone" }, exec())) as ToolValue;
+    expect(value.usage).toMatchObject({ inputTokens: 1500, outputTokens: 100, cacheReadTokens: 5000, cacheWriteTokens: 0 });
+    expect(typeof value.usage!.durationMs).toBe("number");
+    expect(lossless(value)).toBeNull();
+    const meta = tool.output.presentationMeta!({ question: "q?" }, value as never);
+    expect(meta).toMatchObject({ usage: { inputTokens: 1500 } });
   });
 });
 

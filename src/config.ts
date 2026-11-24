@@ -46,6 +46,9 @@ export const Config = Schema.object({
   mode: Schema.union([Schema.const("auto"), Schema.const("manual")]).default("auto").volatile().description("auto：主模型按提示规则自主咨询；manual：仅用户明确要求时咨询。"),
   contextMode: Schema.union([Schema.const("inherited"), Schema.const("standalone")]).default("inherited").volatile().description("默认咨询模式：inherited 顾问获得会话抄本；standalone 盲审，顾问只看问题与补充背景。可被工具的 mode 参数按次覆盖。"),
   advisorPrompt: Schema.string().default("").volatile().description("顾问的回答要求（整条链共用）；留空则按语言使用内置默认。"),
+  advisorComposition: Schema.union([Schema.const("lean"), Schema.const("inherit")]).default("lean").volatile().description("顾问子代理的组成：lean 挂载精简的只读工具集（read / grep / glob / 只读命令），输入更小；inherit 继承主对话的全部工具与提示。精简组成不可用时自动回退为 inherit。"),
+  /** True when this instance is mounted inside the advisor preset (see `src/advisor/preset.ts`): it then only applies the tool allow-list. */
+  presetRole: Schema.boolean().default(false),
   chain: Schema.array(ChainEntryConfig).default([]).volatile().description("顾问模型链，按顺序尝试；前面的失败时顺延到下一个。"),
   followup: FollowupConfig.volatile(),
   /** Set once the user dismissed the one-time legacy-sessions banner. */
@@ -70,6 +73,10 @@ export type AdvisorConfig = {
   contextMode: "inherited" | "standalone";
   /** User-edited answer requirements for the advisor; empty = built-in default by language. */
   advisorPrompt: string;
+  /** Advisor subagent composition: the lean read-only preset, or the parent's full composition. */
+  advisorComposition: "lean" | "inherit";
+  /** This instance sits inside the advisor preset and only applies the tool allow-list. */
+  presetRole: boolean;
   chain: ChainEntry[];
   followup: { maxRounds: number };
   legacyNoticeDismissed: boolean;
@@ -106,6 +113,8 @@ export function normalizeConfig(raw: unknown): AdvisorConfig {
     mode: cfg.mode === "manual" ? "manual" : "auto",
     contextMode: cfg.contextMode === "standalone" ? "standalone" : "inherited",
     advisorPrompt: typeof cfg.advisorPrompt === "string" ? cfg.advisorPrompt.trim() : "",
+    advisorComposition: cfg.advisorComposition === "inherit" ? "inherit" : "lean",
+    presetRole: cfg.presetRole === true,
     chain: Array.isArray(cfg.chain)
       ? cfg.chain
           .filter((e): e is ChainEntry & Record<string, unknown> => !!e && typeof e === "object" && typeof (e as ChainEntry).provider === "string" && (e as ChainEntry).provider.length > 0 && typeof (e as ChainEntry).model === "string" && (e as ChainEntry).model.length > 0)

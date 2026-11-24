@@ -19,6 +19,8 @@ export interface HostServices {
   llm: { resolveModelInfo(provider: string, model: string): Promise<LlmResolvedModelInfo> };
   /** Optional host service (`ctx.get`); undefined when the host lacks it. */
   optional<T>(name: string): T | undefined;
+  /** Diagnostic sink; absent in tests unless provided. */
+  log?: (message: string) => void;
   on(name: "subagent/start", listener: (info: SubagentRunInfo) => void): () => void;
   on(name: "subagent/end", listener: (info: SubagentRunEndInfo) => void): () => void;
 }

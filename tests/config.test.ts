@@ -42,6 +42,8 @@ describe("normalizeConfig", () => {
       mode: "auto",
       contextMode: "inherited",
       advisorPrompt: "",
+      advisorComposition: "lean",
+      presetRole: false,
       chain: [],
       followup: { maxRounds: 8 },
       legacyNoticeDismissed: false,

@@ -1,3 +1,4 @@
+import { ADVISOR_PRESET_ID, applyAdvisorToolMask, registerAdvisorPreset, type PresetRegistryLike, type RestrictableTools } from "./advisor/preset";
 import { setSandboxMode } from "@deepseek-ai/dsh-sandbox-policy";
 import { Config, normalizeConfig } from "./config";
 import { resolveLanguage } from "./i18n";
@@ -22,8 +23,7 @@ interface HostContext {
   logger?: { (name: string): { info(message: string): void; warn(message: string): void } };
   on(event: string, listener: (...args: unknown[]) => unknown): unknown;
   effect(setup: () => unknown, label?: string): unknown;
-  tools: { register: (tool: unknown) => unknown };
-  systemPrompt?: {
+  tools: { register: (tool: unknown) => unknown };  systemPrompt?: {
     section: (options: { name: string; order: number; text: (assembly?: { session?: { id?: string } }) => string }) => unknown;
   };
   inject?: (services: string[], callback: (scoped: HostContext & { settings: { configure: (options: { auto: boolean }, fiber: unknown) => unknown } }) => unknown) => unknown;
@@ -44,6 +44,16 @@ export function apply(ctx: HostContext, _config: unknown) {
   const liveConfig = () => normalizeConfig(ctx.fiber.config);
   const log = makeLogger(ctx);
 
+  // Inside the advisor preset this instance only masks host-level tools: every
+  // global tool (host MCP tools, second_opinion, …) is kept out of the
+  // advisor's view, while the preset's own read-only registrations stay.
+  if (normalizeConfig(ctx.fiber.config).presetRole) {
+    const mask = applyAdvisorToolMask(ctx.tools as unknown as RestrictableTools, (apply) => (ctx.on as (name: string, listener: () => unknown) => unknown)("tools/change", apply) as never);
+    ctx.effect(() => () => mask.dispose(), "dsh-advisor-chain: advisor tool mask");
+    log(`advisor preset tool mask: denying ${mask.state().denied.length} host-level tools`);
+    return;
+  }
+
   // Read-only compatibility for sessions written by versions <= 0.3.9.
   installLegacyShim(undefined, log);
 
@@ -55,6 +65,7 @@ export function apply(ctx: HostContext, _config: unknown) {
     agents: ctx.agents,
     llm: ctx.llm,
     optional: <T>(name: string) => ctx.get?.(name) as T | undefined,
+    log,
     on: ((name: string, listener: (payload: never) => void) => ctx.on(name, listener as (...args: unknown[]) => unknown)) as HostServices["on"],
   };
   const registry = new AdvisorRegistry({
@@ -67,6 +78,22 @@ export function apply(ctx: HostContext, _config: unknown) {
   });
   ctx.effect(() => registry.install(), "dsh-advisor-chain: advisor child watcher");
   ctx.effect(() => ctx.tools.register(createSecondOpinionTool({ host, registry, getConfig: liveConfig, log })), "dsh-advisor-chain: second_opinion tool");
+
+  // The lean advisor composition (read / grep / glob / shell only). Registered
+  // best-effort: without the preset service, or when its mount fails, advisor
+  // children inherit the parent's composition and each result says so.
+  const presets = typeof ctx.get === "function" ? ((ctx.get("agentPresets") as PresetRegistryLike | undefined) ?? undefined) : undefined;
+  if (presets) {
+    ctx.effect(() => {
+      let dispose: (() => Promise<void>) | undefined;
+      void registerAdvisorPreset(presets, log).then((d) => {
+        dispose = d;
+      });
+      return () => void dispose?.();
+    }, "dsh-advisor-chain: advisor preset");
+  } else {
+    log("agentPresets service unavailable; advisors will inherit the parent composition");
+  }
 
   const systemPrompt = ctx.systemPrompt ?? (typeof ctx.get === "function" ? (ctx.get("systemPrompt") as HostContext["systemPrompt"]) : undefined);
   if (systemPrompt) {
@@ -83,6 +110,8 @@ export function apply(ctx: HostContext, _config: unknown) {
           // follows the plugin setting, inferring from the user's latest message.
           text: (assembly) => {
             const cfg = liveConfig();
+            // An advisor child must not see the usage boundary of the tool it is forbidden to call.
+            if (presets?.presetForSession?.(assembly?.session as never) === ADVISOR_PRESET_ID) return "";
             const pressure = pressureTracker.get(assembly?.session?.id);
             const sessionId = assembly?.session?.id;
             if (sessionId && pressure && pressure.count >= cfg.trigger.repeatThreshold && loggedStreaks.get(sessionId) !== pressure.count) {

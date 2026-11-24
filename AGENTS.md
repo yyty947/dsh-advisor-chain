@@ -34,4 +34,4 @@ DSH 插件 `dsh-advisor-chain`（Second Opinion）：主模型调用 `second_opi
 
 ## 成本
 
-顾问子代理目前继承主代理的完整组成：在维护者机器上，**空白会话首次咨询输入约 48k token**（技能目录 + 全部工具 schema），输出仅几百。任何会增加顾问输入的改动都要先量；下一版的顾问 preset 以削减这部分为目标（见 CHANGELOG 计划）。
+顾问默认跑在精简 preset 上（`src/advisor/preset.ts`）：只有 read / read_image / grep / glob / pwsh(bash)，宿主级工具被 deny 名单挡住，技能目录不挂。实测同一问题的输入从 **48,887 降到 3,651 token**。任何会改顾问输入的改动都要用 `node scripts/measure-advisor-usage.mjs <子会话日志>` 量 before / after（子会话目录按子会话 id 命名，在 `~/.dsh/sessions/<工作区>/` 下）；preset 不可用时自动回退为继承，原因写在结果注记里——宿主不落日志，那是唯一可见的诊断通道。

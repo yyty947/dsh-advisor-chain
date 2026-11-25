@@ -14,8 +14,14 @@
  * - assistant tool calls keep their NAME AND ARGUMENTS (the advisor must see
  *   what was read and what was changed); reasoning blocks are skipped;
  * - tool results are labeled, failures marked, and every entry is clipped;
- * - the in-flight call to `excludeToolName` (the consultation itself) is left
- *   out, while earlier completed consultations stay in;
+ * - the in-flight call to `excludeToolName` (the consultation itself) AND every
+ *   earlier consultation's call and result are left out: a new advisor judges
+ *   the conversation, not a previous advisor's verdict on it;
+ * - injected harness bookkeeping for the main agent is left out on purpose
+ *   (skill catalogs, subagent completion notices, goal notices), and only the
+ *   newest time / environment snapshot and instruction reminder is kept — in a
+ *   real session these made up 97% of user-role text; what was left out is
+ *   counted per category in `omitted` for the caller's receipt;
  * - the newest window that fits the budget is kept, dropped older entries are
  *   counted, and the FIRST user request is preserved as a short head summary
  *   so long sessions do not lose the original task.
@@ -47,7 +53,7 @@ export interface TranscriptMessageLike {
 export interface TranscriptOptions {
   maxChars: number;
   perEntryMaxChars: number;
-  /** Tool name whose in-flight call (no result yet) is excluded from the transcript. */
+  /** Tool whose calls and results are left out entirely — earlier consultations would anchor a new advisor. */
   excludeToolName?: string;
   /** Character budget for the head summary of the first user request. */
   headSummaryMaxChars?: number;
@@ -55,17 +61,43 @@ export interface TranscriptOptions {
   lang?: Lang;
 }
 
+/** Categories of injected content the transcript leaves out, for the receipt. */
+export type OmittedCategory = "skills" | "notices" | "snapshots" | "priorAdvice";
+
 export interface TranscriptResult {
   text: string;
+  /** Rendered entries kept. */
+  keptCount: number;
   /** Older entries dropped to fit the budget. */
   droppedCount: number;
   /** Entries (or tool-call arguments) clipped to `perEntryMaxChars`. */
   clippedCount: number;
   /** true when older messages were dropped to fit the budget */
   truncated: boolean;
+  /** Injected content left out on purpose, counted per category. */
+  omitted: Partial<Record<OmittedCategory, number>>;
 }
 
 const DEFAULT_HEAD_SUMMARY_MAX_CHARS = 600;
+
+/**
+ * Injected user-role producers the advisor is better without. They are
+ * harness bookkeeping for the MAIN agent — in a real session they made up
+ * 97% of user-role text (a 14k-character skill catalog twice, nine
+ * completion notices, forty time snapshots) next to under 5k characters the
+ * human actually wrote. The advisor has its own composition and can read the
+ * workspace; it needs none of this.
+ */
+const OMITTED_KINDS = new Map<string, OmittedCategory>([
+  ["skill-catalog", "skills"],
+  ["skills", "skills"],
+  ["skill-invocation", "skills"],
+  ["subagent-settled", "notices"],
+  ["tool-goal", "notices"],
+]);
+
+/** Producers whose newest message supersedes every older one. */
+const LATEST_ONLY_KINDS = new Set(["time-context", "runtime-context", "environment", "agent-instructions"]);
 
 function clip(text: string, maxChars: number, lang: Lang): { text: string; clipped: boolean } {
   if (text.length <= maxChars) return { text, clipped: false };
@@ -169,15 +201,6 @@ function renderBlocks(
   return parts.join("\n").trim();
 }
 
-/** Ids of tool calls that already have a result in the log. */
-function collectAnsweredCallIds(messages: readonly TranscriptMessageLike[]): Set<unknown> {
-  const answered = new Set<unknown>();
-  for (const message of messages) {
-    if (message.role === "tool" && message.toolCallId !== undefined) answered.add(message.toolCallId);
-  }
-  return answered;
-}
-
 /** The first real user message, rendered as a short head summary. */
 function headSummaryOf(messages: readonly TranscriptMessageLike[], maxChars: number, lang: Lang): string | null {
   for (const message of messages) {
@@ -192,8 +215,14 @@ function headSummaryOf(messages: readonly TranscriptMessageLike[], maxChars: num
 export function buildTranscript(messages: readonly TranscriptMessageLike[], options: TranscriptOptions): TranscriptResult {
   const lang = options.lang ?? "zh";
   const clipped = { count: 0 };
+  const omitted: Partial<Record<OmittedCategory, number>> = {};
+  const omit = (category: OmittedCategory, by = 1) => {
+    omitted[category] = (omitted[category] ?? 0) + by;
+  };
   const exclude = options.excludeToolName;
-  // Every call to the excluded tool is in flight unless a result answers it.
+  // Every call to the excluded tool goes — the in-flight one and the earlier
+  // consultations too: a new advisor judges the conversation, not a previous
+  // advisor's verdict on it (quote that in `context` to get a reaction).
   const excludedCallIds = new Set<unknown>();
   if (exclude) {
     for (const message of messages) {
@@ -202,14 +231,32 @@ export function buildTranscript(messages: readonly TranscriptMessageLike[], opti
         if (block.type === "tool-call" && block.name === exclude) excludedCallIds.add(block.id);
       }
     }
-    for (const id of collectAnsweredCallIds(messages)) excludedCallIds.delete(id);
   }
+  // Only the newest snapshot / instruction reminder is current; older ones mislead.
+  const latestOfKind = new Map<string, number>();
+  messages.forEach((message, index) => {
+    const kind = message.role === "user" ? message.source?.kind : undefined;
+    if (kind && LATEST_ONLY_KINDS.has(kind)) latestOfKind.set(kind, index);
+  });
 
   const entries: Array<{ label: string; text: string }> = [];
   // Entry index of the first message the real user wrote, so a dropped
   // original request can be restored as a short head summary.
   let firstUserEntryIndex = -1;
-  messages.forEach((message) => {
+  messages.forEach((message, index) => {
+    const kind = message.role === "user" ? message.source?.kind : undefined;
+    if (kind && OMITTED_KINDS.has(kind)) {
+      omit(OMITTED_KINDS.get(kind)!, 1);
+      return;
+    }
+    if (kind && LATEST_ONLY_KINDS.has(kind) && latestOfKind.get(kind) !== index) {
+      omit("snapshots", 1);
+      return;
+    }
+    if (message.role === "tool" && excludedCallIds.has(message.toolCallId)) {
+      omit("priorAdvice", 1);
+      return;
+    }
     const entry = messageToEntry(message, options.perEntryMaxChars, excludedCallIds, exclude, clipped, lang);
     if (!entry) return;
     if (firstUserEntryIndex < 0 && message.role === "user" && (message.source?.kind ?? "user") === "user") {
@@ -245,5 +292,5 @@ export function buildTranscript(messages: readonly TranscriptMessageLike[], opti
     }
   }
   parts.push(...kept);
-  return { text: parts.join("\n\n"), droppedCount: dropped, clippedCount: clipped.count, truncated: dropped > 0 };
+  return { text: parts.join("\n\n"), keptCount: kept.length, droppedCount: dropped, clippedCount: clipped.count, truncated: dropped > 0, omitted };
 }

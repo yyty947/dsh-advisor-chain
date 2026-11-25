@@ -65,8 +65,8 @@ describe("messageToEntry", () => {
 describe("buildTranscript", () => {
   const opts = { maxChars: 100000, perEntryMaxChars: 2000 };
 
-  it("excludes the in-flight second_opinion call but keeps completed consultations", () => {
-    const text = buildTranscript(
+  it("leaves out every second_opinion call and result, so a new advisor is not anchored by earlier opinions", () => {
+    const result = buildTranscript(
       [
         user("第一个问题"),
         assistant({ type: "tool-call", id: "a", name: "second_opinion", arguments: "{\"question\":\"q1\"}" }),
@@ -75,12 +75,40 @@ describe("buildTranscript", () => {
         assistant({ type: "tool-call", id: "b", name: "second_opinion", arguments: "{\"question\":\"q2\"}" }),
       ],
       { ...opts, excludeToolName: "second_opinion" },
-    ).text;
-    expect(text).toContain("q1");
-    expect(text).toContain("第一份意见");
-    expect(text).not.toContain("q2");
-    // The assistant message that only held the in-flight call disappears entirely.
-    expect(text.match(/\[主模型\]/g)?.length).toBe(2);
+    );
+    expect(result.text).not.toContain("q1");
+    expect(result.text).not.toContain("第一份意见");
+    expect(result.text).not.toContain("q2");
+    // Both assistant messages that only held a consultation call disappear entirely.
+    expect(result.text.match(/\[主模型\]/g)?.length).toBe(1);
+    expect(result.omitted).toEqual({ priorAdvice: 1 });
+  });
+
+  it("drops harness bookkeeping, keeps only the newest snapshot, and reports what it left out", () => {
+    const injected = (kind: string, text: string): TranscriptMessageLike => ({ role: "user", source: { kind }, content: [{ type: "text", text }] });
+    const result = buildTranscript(
+      [
+        injected("skill-catalog", "技能目录 A".repeat(500)),
+        injected("time-context", "时间 1"),
+        user("真实问题"),
+        injected("time-context", "时间 2"),
+        { role: "user", source: { kind: "subagent-settled", form: "notice", summary: "agent-1 finished" }, content: [] },
+        injected("agent-instructions", "AGENTS 旧版"),
+        injected("agent-instructions", "AGENTS 新版"),
+        injected("agent-message", "来自其他代理的内容"),
+      ],
+      opts,
+    );
+    expect(result.text).not.toContain("技能目录");
+    expect(result.text).not.toContain("时间 1");
+    expect(result.text).toContain("时间 2");
+    expect(result.text).not.toContain("agent-1 finished");
+    expect(result.text).not.toContain("AGENTS 旧版");
+    expect(result.text).toContain("AGENTS 新版");
+    expect(result.text).toContain("来自其他代理的内容");
+    expect(result.text).toContain("真实问题");
+    expect(result.keptCount).toBe(4);
+    expect(result.omitted).toEqual({ skills: 1, notices: 1, snapshots: 2 });
   });
 
   it("keeps the newest window within the budget and restores the original request as a head summary", () => {

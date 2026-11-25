@@ -12,7 +12,7 @@ import { startAdvisor, type Refusal } from "./advisor/start";
 import { beginFollowUp, finishFollowUp } from "./advisor/followup";
 import { classifySubagentError, settleOutcome, waitWithTimeout, type AdvisorOutcome } from "./advisor/result";
 import { noopLogger, type HostServices, type Logger } from "./advisor/types";
-import { detectLanguage, resolveLanguage, t, type Lang } from "./i18n";
+import { detectLanguage, resolveLanguage, t, type HostKey, type Lang } from "./i18n";
 
 export const TOOL_NAME = "second_opinion";
 
@@ -77,6 +77,21 @@ export interface ToolValue {
   parentSessionId?: string;
   /** Dual consultations only: each advisor's opinion, in chain order. */
   opinions?: OpinionRecord[];
+  /** Consultation mode that produced this answer. */
+  mode?: "inherited" | "standalone";
+  /** What the advisor's transcript contained (inherited mode). */
+  transcript?: TranscriptStats;
+  /** Follow-up rounds the user's settings allow for a thread; the receipt shows round/max. */
+  followUpMax?: number;
+}
+
+/** Transcript composition facts for the result receipt. */
+export interface TranscriptStats {
+  kept: number;
+  clipped: number;
+  dropped: number;
+  /** Injected content left out on purpose, counted per category. */
+  omitted?: Array<{ key: string; count: number }>;
 }
 
 const isRefusal = (r: AdvisorOutcome | Refusal | (AdvisorOutcome & { childId: string })): r is Refusal =>
@@ -87,14 +102,40 @@ function clipForMeta(text: string | undefined, max = 2000): string | undefined {
   return text.length > max ? `${text.slice(0, max)}…` : text;
 }
 
-/** Model-visible text: the advice, then the notes and the follow-up hint.
- *  The hint follows the advice's own language (the canonical value carries no
- *  locale and render has no config access). */
+const OMITTED_KEYS: Record<string, HostKey> = { skills: "tool.omitted.skills", notices: "tool.omitted.notices", snapshots: "tool.omitted.snapshots", priorAdvice: "tool.omitted.priorAdvice" };
+
+/** Human summary of what the transcript left out on purpose, e.g. "技能目录 2、完成通知 9". */
+export function summarizeOmitted(omitted: Array<{ key: string; count: number }> | Record<string, number> | undefined, lang: Lang): string | undefined {
+  if (!omitted) return undefined;
+  const entries = Array.isArray(omitted) ? omitted.map((o) => [o.key, o.count] as const) : Object.entries(omitted);
+  const parts = entries
+    .filter(([, count]) => (count ?? 0) > 0)
+    .map(([key, count]) => (OMITTED_KEYS[key] ? t(lang, OMITTED_KEYS[key], { count }) : `${key} ${count}`));
+  return parts.length ? parts.join(lang === "zh" ? "、" : ", ") : undefined;
+}
+
+/** One line telling the main model who answered and what the advisor could see. */
+function receipt(value: ToolValue, lang: Lang): string {
+  const tr = value.transcript;
+  const omitted = summarizeOmitted(tr?.omitted, lang);
+  return t(lang, "tool.receipt", {
+    model: value.model || t(lang, "tool.advisorLabel"),
+    mode: value.mode === "standalone" ? t(lang, "tool.modeStandalone") : value.mode === "inherited" ? t(lang, "tool.modeInherited") : t(lang, "tool.modeThread"),
+    kept: tr?.kept ?? 0,
+    clipped: tr && tr.clipped > 0 ? t(lang, "tool.receiptClipped", { count: tr.clipped }) : "",
+    dropped: tr && tr.dropped > 0 ? t(lang, "tool.receiptDropped", { count: tr.dropped }) : "",
+    omitted: omitted ? t(lang, "tool.receiptOmitted", { summary: omitted }) : "",
+    round: value.round !== undefined && value.followUpMax ? t(lang, "tool.receiptRound", { round: value.round, max: value.followUpMax }) : "",
+  });
+}
+
+/** Model-visible text: the duplicate-notice warning, the receipt, then the advice, notes and follow-up hint.
+ *  Language follows the advice's own text (the canonical value carries no locale and render has no config access). */
 function textOfAdvice(value: ToolValue): string {
   const lang: Lang = detectLanguage(value.advice) ?? "zh";
   const notes = value.notes.length ? `\n\n${t(lang, "tool.notes", { notes: value.notes.join(lang === "zh" ? "；" : "; ") })}` : "";
   const hint = value.consultId ? (value.dual ? t(lang, "tool.hintDual") : t(lang, "tool.hintFollowUp", { id: value.consultId })) : "";
-  return value.advice + notes + hint;
+  return [t(lang, "tool.noticeWarning"), receipt(value, lang), value.advice + notes + hint].join("\n");
 }
 
 export function createSecondOpinionTool(deps: AdvisorDeps) {
@@ -103,13 +144,18 @@ export function createSecondOpinionTool(deps: AdvisorDeps) {
     name: TOOL_NAME,
     description:
       "Ask a configured advisor model chain for a second opinion. The advisor is a read-only subagent: it can read files and run read-only commands to verify, " +
-      "cannot change anything, and reports only to you. Default inherited mode: the advisor receives a bounded text transcript of this conversation " +
-      "(tool outputs may be clipped, older messages may be omitted), so ask the specific question and do not restate background; put facts the transcript " +
-      "cannot hold (your intent, unstated constraints, omitted earlier points) in context, and give file paths when the question depends on a large file or long " +
-      "output so the advisor reads it itself. Blind-review mode (mode=standalone): the advisor sees no conversation; state the goal, constraints, what was " +
-      "tried and the relevant file paths in context. Supports follow-ups (consult_id + follow_up; also the way to add information the advisor says is missing) " +
-      "and dual opinions (dual_opinions: the first two advisors of the chain consulted in parallel). Use it before major decisions, for high-risk judgements, " +
-      "when unsure of a conclusion or repeatedly stuck; always when the user explicitly asks for an advisor.",
+      "cannot change anything, and reports only to you; treat its reply as the view of someone who read the workspace — verify concrete defects before acting on them. " +
+      "The chain is a failover list: entries are tried in order and only model-class failures (rate limit, context overflow, timeout…) fall through to the next; " +
+      "authorization or infrastructure failures stop at once. Default inherited mode: the advisor receives a bounded text transcript of this conversation — earlier " +
+      "consultations' answers are left out, so a new advisor is not anchored by them (quote an earlier opinion in context if you want a reaction) — with harness noise " +
+      "(skill catalogs, notices) removed, tool outputs clipped and older messages possibly omitted; the result's first line reports what the transcript contained. " +
+      "Ask the specific question; put facts the transcript cannot hold (your intent, unstated constraints, omitted earlier points) in context, and give file paths when the " +
+      "question depends on a large file or long output so the advisor reads it itself. Blind-review mode (mode=standalone): the advisor sees no conversation; state the " +
+      "goal, constraints, what was tried and the relevant file paths in context. Follow-ups: consult_id addresses the advisor's own sub-conversation; follow_up continues " +
+      "it with that thread's context (bounded by the user's follow-up limits; a thread is archived once the conversation has moved on); the advisor cannot be followed up " +
+      "while it is still answering. dual_opinions consults the first two chain entries in parallel and returns two independent opinions (with a single model, two " +
+      "independent samples), each with its own consult_id. Use it before major decisions, for high-risk judgements, when unsure of a conclusion or repeatedly stuck; " +
+      "always when the user explicitly asks for an advisor.",
     parameters: {
       question: {
         type: "string",
@@ -147,6 +193,21 @@ export function createSecondOpinionTool(deps: AdvisorDeps) {
           dual: { type: "boolean" },
           truncated: { type: "boolean" },
           round: { type: "number" },
+          mode: { type: "string" },
+          followUpMax: { type: "number" },
+          transcript: {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+              kept: { type: "number", required: true },
+              clipped: { type: "number", required: true },
+              dropped: { type: "number", required: true },
+              omitted: {
+                type: "array",
+                items: { type: "object", additionalProperties: false, properties: { key: { type: "string", required: true }, count: { type: "number", required: true } } },
+              },
+            },
+          },
           attempts: {
             type: "array",
             items: {
@@ -200,6 +261,8 @@ export function createSecondOpinionTool(deps: AdvisorDeps) {
           round: v.round,
           usage: v.usage,
           parent: v.parentSessionId,
+          followUpMax: v.followUpMax,
+          transcript: v.transcript as unknown as JsonMeta,
           // Two full opinions can be long; the card needs them whole, so only an extreme size is cut.
           opinions: v.opinions?.map((o) => ({ label: o.label, ok: o.ok, content: clipForMeta(o.content, 60000) ?? "", consultId: o.consultId })),
         };
@@ -263,6 +326,7 @@ export function createSecondOpinionTool(deps: AdvisorDeps) {
           notes,
           round: begin.round,
           parentSessionId: String(parent.id),
+          followUpMax: cfg.followup.maxRounds,
           ...(usage ? { usage } : {}),
         };
       }
@@ -272,7 +336,7 @@ export function createSecondOpinionTool(deps: AdvisorDeps) {
       const question = args.question.trim();
       const mode: "inherited" | "standalone" = args.mode === "standalone" ? "standalone" : args.mode === "inherited" ? "inherited" : cfg.contextMode;
       const notes: string[] = [];
-      const prompt = buildPrompt(deps, parent, cfg, mode, question, args.context, notes);
+      const prompt = buildPrompt(deps, parent, cfg, mode, question, args.context);
       const live: SubagentActivation[] = [];
       /** An attempt's outcome plus the child that produced it; `consult_id` is the child's session id so follow-ups can find the thread. */
       type RunResult = (AdvisorOutcome & { childId: string; usage?: UsageRecord }) | Refusal;
@@ -381,7 +445,7 @@ export function createSecondOpinionTool(deps: AdvisorDeps) {
           for (const r of results.filter(isRun)) {
             if (r.ok) deps.registry.record({ childId: r.childId, parentSessionId: String(parent.id), consultId: r.childId, label: ADVISOR_LABEL_PREFIX + "dual", provider: "", model: "", dual: true });
           }
-          return { advice: sections.join("\n\n———\n\n") + failedNote, model: models.join(" + "), consultId: firstChild, dual: true, truncated: anyTruncated, attempts, notes, parentSessionId: String(parent.id), opinions, ...(usage ? { usage } : {}) };
+          return { advice: sections.join("\n\n———\n\n") + failedNote, model: models.join(" + "), consultId: firstChild, dual: true, truncated: anyTruncated, attempts, notes, parentSessionId: String(parent.id), opinions, mode, ...(prompt.transcript ? { transcript: prompt.transcript } : {}), ...(usage ? { usage } : {}) };
         }
 
         const attempts: AttemptRecord[] = [];
@@ -401,6 +465,9 @@ export function createSecondOpinionTool(deps: AdvisorDeps) {
               attempts,
               notes,
               parentSessionId: String(parent.id),
+              mode,
+              ...(prompt.transcript ? { transcript: prompt.transcript } : {}),
+              followUpMax: cfg.followup.maxRounds,
               ...(result.usage ? { usage: result.usage } : {}),
             };
           }
@@ -437,11 +504,15 @@ export function createSecondOpinionTool(deps: AdvisorDeps) {
 interface BuiltPrompt {
   text: string;
   lang: Lang;
+  /** Transcript composition facts for the receipt (inherited mode only). */
+  transcript?: TranscriptStats;
 }
 
 /** Resolve the call's language from the question, the context and (inherited
- *  mode) the user's latest message, then assemble the advisor prompt. */
-function buildPrompt(deps: AdvisorDeps, parent: Agent, cfg: AdvisorConfig, mode: "inherited" | "standalone", question: string, context: string | undefined, notes: string[]): BuiltPrompt {
+ *  mode) the user's latest message, then assemble the advisor prompt. The
+ *  transcript's composition goes to the receipt rather than the notes, so the
+ *  main model learns what the advisor could see without reading a second copy. */
+function buildPrompt(deps: AdvisorDeps, parent: Agent, cfg: AdvisorConfig, mode: "inherited" | "standalone", question: string, context: string | undefined): BuiltPrompt {
   if (mode === "standalone") {
     const lang = resolveLanguage(`${question}\n${context ?? ""}`);
     return { lang, text: buildAdvisorPrompt({ mode, lang, advisorPrompt: cfg.advisorPrompt, question, context }) };
@@ -459,10 +530,15 @@ function buildPrompt(deps: AdvisorDeps, parent: Agent, cfg: AdvisorConfig, mode:
     excludeToolName: TOOL_NAME,
     lang,
   });
-  if (transcript.droppedCount > 0) notes.push(t(lang, "tool.transcriptDropped", { count: transcript.droppedCount }));
-  if (transcript.clippedCount > 0) notes.push(t(lang, "tool.transcriptClipped", { count: transcript.clippedCount }));
+  const omittedEntries = Object.entries(transcript.omitted).filter(([, count]) => (count ?? 0) > 0).map(([key, count]) => ({ key, count: count ?? 0 }));
   return {
     lang,
+    transcript: {
+      kept: transcript.keptCount,
+      clipped: transcript.clippedCount,
+      dropped: transcript.droppedCount,
+      ...(omittedEntries.length ? { omitted: omittedEntries } : {}),
+    },
     text: buildAdvisorPrompt({
       mode,
       lang,
@@ -472,6 +548,7 @@ function buildPrompt(deps: AdvisorDeps, parent: Agent, cfg: AdvisorConfig, mode:
       transcriptText: transcript.text,
       transcriptDropped: transcript.droppedCount,
       transcriptClipped: transcript.clippedCount,
+      transcriptOmitted: summarizeOmitted(transcript.omitted, lang),
     }),
   };
 }

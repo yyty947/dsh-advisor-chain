@@ -17,6 +17,8 @@ export interface AdvisorPromptInput {
   transcriptText?: string;
   transcriptDropped?: number;
   transcriptClipped?: number;
+  /** What the transcript left out on purpose (harness noise, earlier consultations), already phrased for the advisor. */
+  transcriptOmitted?: string;
 }
 
 export function buildAdvisorPrompt(input: AdvisorPromptInput): string {
@@ -36,7 +38,8 @@ export function buildAdvisorPrompt(input: AdvisorPromptInput): string {
     const header =
       t(lang, "preamble.transcript") +
       (dropped > 0 ? t(lang, "preamble.transcriptDropped", { count: dropped }) : "") +
-      (clipped > 0 ? t(lang, "preamble.transcriptClipped", { count: clipped }) : "");
+      (clipped > 0 ? t(lang, "preamble.transcriptClipped", { count: clipped }) : "") +
+      (input.transcriptOmitted ? "\n" + t(lang, "preamble.transcriptOmitted", { summary: input.transcriptOmitted }) : "");
     sections.push(header, input.transcriptText?.trim() || t(lang, "preamble.noTranscript"));
   }
   if (input.context && input.context.trim()) sections.push(`${t(lang, "preamble.context")}\n${input.context.trim()}`);
